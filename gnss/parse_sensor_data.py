@@ -7,13 +7,16 @@ import json
 import zipfile
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from pathlib import Path
 from loguru import logger
 from scipy.optimize import linear_sum_assignment
 
 from cfg import DATA_FOLDER
-from model.preprocess import reduce_mem_usage
+from feature import get_sat_coverage_dataframe
 from vis import plot_satellite_distribution_seaborn
+from model.preprocess import reduce_mem_usage
+from model.featureEng import aggregate_data
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -23,32 +26,25 @@ KEYWORD_2_COLUMN = {
     'mobile': ['cid'],
 }
 
-def extract_data_from_zip(zip_filename: str, keyword: str) -> pd.DataFrame:
-    """
-    Extracts data from a zip file based on a keyword in filenames and returns a DataFrame.
+LABEL = "label"
+
+""" 工具函数 """
+def delete_cache_gnss_records(data):
+    ori_size = data.shape[0]
+    data.isUsed = data.isUsed.astype(bool)
+    _df_sat = data.query("satDb > 0 or isUsed == True")
+    cur_size = _df_sat.shape[0]
+    logger.debug(f"Delete {ori_size - cur_size} records, remaine {cur_size} records , {(ori_size - cur_size) / ori_size * 100:.1f}% off")
+
+    return _df_sat
+
+def get_label(df, fn):
+    df.loc[:, LABEL] = df[fn].apply(lambda x: True if 'in' in x else(False if 'out' in x else np.nan))
     
-    Parameters:
-    - zip_filename (str): The path to the zip file.
-    - keyword (str): The keyword to search for in filenames.
+    return df
     
-    Returns:
-    - pd.DataFrame: A DataFrame containing the extracted data.
-    """
-    all_records = []
 
-    with zipfile.ZipFile(zip_filename, 'r') as z:
-        filenames = [name for name in z.namelist() if keyword in name and name.endswith(".txt")]
-        
-        for filename in filenames:
-            with z.open(filename) as f:
-                for line in f:
-                    line = line.decode('utf-8').strip()  
-                    if line:  
-                        all_records.append(json.loads(line))
-
-    # Convert the JSON records to a pandas DataFrame
-    return pd.DataFrame(all_records)
-
+""" 读取函数 """
 def convert_timestamp_to_datetime_custom_unit(df: pd.DataFrame, column_name: str, unit: str = 'ms') -> pd.DataFrame:
     """
     Convert a timestamp column in a DataFrame to a datetime column in UTC+8 timezone with a specified unit.
@@ -68,47 +64,6 @@ def convert_timestamp_to_datetime_custom_unit(df: pd.DataFrame, column_name: str
     
     df[column_name] = df[column_name].dt.tz_localize('UTC').dt.tz_convert('Asia/Shanghai')
     return df
-
-def extract_data_from_directory(folder: str, keywords: str, unit: str = 'ms') -> pd.DataFrame:
-    """
-    Extract data from all zip files in a given directory based on a keyword in filenames and returns a DataFrame.
-    
-    Parameters:
-    - directory_path (str): The path to the directory containing zip files.
-    - keyword (str): The keyword to search for in filenames.
-    - unit (str): The unit of the timestamp ('s', 'ms', 'us', etc.). Default is 'ms'.
-    
-    Returns:
-    - pd.DataFrame: A DataFrame containing the extracted data from all zip files.
-    """
-    if isinstance(keywords, str):
-        keywords = [keywords]
-    assert "GNSS" in keywords, "Check the keywords"
-    
-    all_dataframes = []
-    for filename in os.listdir(folder):
-        if not filename.endswith(".zip"):
-            continue
-        
-        logger.debug(f"process: {filename}")
-        df = extract_data_from_zip(os.path.join(folder, filename), "GNSS")
-
-        for i in keywords:
-            if i == "GNSS":
-                continue
-            _df = extract_data_from_zip(os.path.join(folder, filename), i)
-            left_idxs, right_idxs = optimal_bipartite_matching(df, _df)
-            cols = KEYWORD_2_COLUMN[i]
-            for col in cols:
-                df[f"{i}_{col}"] = np.nan
-                df.loc[left_idxs, f"{i}_{col}"] = _df.loc[right_idxs, col].values
-
-        # df = convert_timestamp_to_datetime_custom_unit(df, 'timestamp', unit)
-        
-        df.loc[:, 'fn'] = filename
-        all_dataframes.append(df)
-
-    return pd.concat(all_dataframes, ignore_index=True)
 
 def explode_sat_data(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -148,6 +103,76 @@ def optimal_bipartite_matching(gnss_df, light_df):
     
     return gnss_indices[valid_matches], light_indices[valid_matches]
 
+def extract_data_from_zip(zip_filename: str, keyword: str) -> pd.DataFrame:
+    """
+    Extracts data from a zip file based on a keyword in filenames and returns a DataFrame.
+    
+    Parameters:
+    - zip_filename (str): The path to the zip file.
+    - keyword (str): The keyword to search for in filenames.
+    
+    Returns:
+    - pd.DataFrame: A DataFrame containing the extracted data.
+    """
+    all_records = []
+
+    with zipfile.ZipFile(zip_filename, 'r') as z:
+        filenames = [name for name in z.namelist() if keyword in name and name.endswith(".txt")]
+        
+        for filename in filenames:
+            with z.open(filename) as f:
+                for line in f:
+                    line = line.decode('utf-8').strip()  
+                    if line:  
+                        all_records.append(json.loads(line))
+
+    # Convert the JSON records to a pandas DataFrame
+    return pd.DataFrame(all_records)
+
+def extract_data_from_directory(folder: str, keywords: str, unit: str = 'ms') -> pd.DataFrame:
+    """
+    Extract data from all zip files in a given directory based on a keyword in filenames and returns a DataFrame.
+    
+    Parameters:
+    - directory_path (str): The path to the directory containing zip files.
+    - keyword (str): The keyword to search for in filenames.
+    - unit (str): The unit of the timestamp ('s', 'ms', 'us', etc.). Default is 'ms'.
+    
+    Returns:
+    - pd.DataFrame: A DataFrame containing the extracted data from all zip files.
+    """
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    assert "GNSS" in keywords, "Check the keywords"
+    
+    all_dataframes = []
+    for filename in os.listdir(folder):
+        if not filename.endswith(".zip"):
+            continue
+        
+        logger.debug(f"process: {filename}")
+        df = extract_data_from_zip(os.path.join(folder, filename), "GNSS")
+
+        for i in keywords:
+            if i == "GNSS":
+                continue
+            _df = extract_data_from_zip(os.path.join(folder, filename), i)
+            left_idxs, right_idxs = optimal_bipartite_matching(df, _df)
+            cols = KEYWORD_2_COLUMN[i]
+            for col in cols:
+                df[f"{i}_{col}"] = np.nan
+                df.loc[left_idxs, f"{i}_{col}"] = _df.loc[right_idxs, col].values
+
+        # df = convert_timestamp_to_datetime_custom_unit(df, 'timestamp', unit)
+        
+        df.loc[:, 'fn'] = filename
+        df = get_label(df, 'fn')
+        all_dataframes.append(df)
+
+    return pd.concat(all_dataframes, ignore_index=True)
+
+
+#%%
 if __name__ == "__main__":
     df = extract_data_from_directory(DATA_FOLDER, ["GNSS", 'light', 'mobile'])
     df_sat = explode_sat_data(df)
@@ -155,16 +180,6 @@ if __name__ == "__main__":
 
 
 # %%
-""" 工具函数 """
-def delete_cache_gnss_records(df_sat):
-    ori_size = df_sat.shape[0]
-    df_sat.isUsed = df_sat.isUsed.astype(bool)
-    _df_sat = df_sat.query("satDb > 0 or isUsed == True")
-    cur_size = _df_sat.shape[0]
-    logger.debug(f"Delete {ori_size - cur_size} records, remaine {cur_size} records , {(ori_size - cur_size) / ori_size * 100:.1f}% off")
-
-    return _df_sat
-
 # step 1: delete `NaN`` 
 df_sat = reduce_mem_usage(df_sat)
 df_sat.satFrequency = np.round((df_sat.satFrequency / 1e6).values, 2)
@@ -172,65 +187,43 @@ df_sat.satFrequency = np.round((df_sat.satFrequency / 1e6).values, 2)
 # step 2: delete `cache`
 df_sat = delete_cache_gnss_records(df_sat)
 
-# aux func:
+# step 3: 卫星覆盖程度
+# df_converage = get_sat_coverage_dataframe(df_sat, ['rid'])
+# df_converage = df_converage.merge(df[[LABEL]], left_index=True, right_index=True)
+# sns.pairplot(data=df_converage, hue=LABEL)
+
 # plot_satellite_distribution_seaborn(df_sat.query('rid==99'))
 # df_sat.query('rid==99').to_csv('./sample.csv', index=False)
 
 
-# %%
-import pandas as pd
-import numpy as np
-
-def satellite_coverage_metric(df, elevation_interval=30, azimuth_interval=30):
-    df['elevation_bin'] = (df['elevation'] // elevation_interval) * elevation_interval
-    df['azimuth_bin'] = (df['azimuth'] // azimuth_interval) * azimuth_interval
-    
-    coverage_df = df.groupby(['elevation_bin', 'azimuth_bin']).agg({
-        'satDb': ['count', 'mean']
-    }).reset_index()
-    
-    coverage_df.columns = ['elevation_bin', 'azimuth_bin', 'sat_count', 'snr_mean']
-    
-    total_bins = (360 // azimuth_interval) * (90 // elevation_interval)
-    occupied_bins = coverage_df['sat_count'].gt(0).sum()
-    coverage_percentage = (occupied_bins / total_bins) * 100
-    average_snr = coverage_df['snr_mean'].mean()
-    snr_std = coverage_df['snr_mean'].std()
-    
-    summary = {
-        'total_bins': total_bins,
-        'occupied_bins': occupied_bins,
-        'coverage_percentage': coverage_percentage,
-        'average_snr': average_snr,
-        'snr_std_dev': snr_std
-    }
-    
-    return summary
-
-# 使用函数
-coverage_metrics = satellite_coverage_metric(df_sat.query('rid==0'))
-coverage_metrics
 
 # %%
-
-group_cols = ['rid'] + ['satTye']
-
-df_sat.groupby(group_cols).agg(list)
-
-# %%
-from model.featureEng import aggregate_data
-
-
-
+#! 统计特征
 feat_lst = []
 tag_2_feats = {}
-aggregate_data(df_sat, ['rid'], ['satDb'],  n_partitions=1, feat_lst=feat_lst, tag_2_feats=tag_2_feats, desc="haha") # bin_att='satDb', intvl=10,
-feat_lst[0]
 
 
-# %%
-aggregate_data(df_sat, ['rid'], ['satDb'],  n_partitions=4, feat_lst=feat_lst, tag_2_feats=tag_2_feats, desc="haha") # bin_att='satDb', intvl=10,
+params = {
+    'data': df_sat, 
+    'feat_lst': feat_lst,
+    'tag_2_feats': tag_2_feats, 
+    'n_partitions': 4,
+}
 
-np.allclose(feat_lst[0].values, feat_lst[1].values)
+feats, _ = aggregate_data(
+    group_cols=['rid'], 
+    attrs=['satDb'], 
+    # bin_att='satDb',
+    # intvl=10,
+    desc="haha",
+    agg_ops=['count', 'mean', 'std', '50%', '75%'],
+    # bin_att='satDb', intvl=10,
+    **params
+) 
+
+feats
+# np.allclose(feat_lst[0].values, feat_lst[1].values)
 
 #%%
+aggregate_data(df_sat, ['rid'], ['satDb'],  n_partitions=1, feat_lst=feat_lst, tag_2_feats=tag_2_feats, desc="haha") # bin_att='satDb', intvl=10,
+feat_lst[0]

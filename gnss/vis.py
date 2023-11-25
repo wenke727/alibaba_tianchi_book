@@ -10,7 +10,7 @@ def plot_satellite_distribution_seaborn(df):
     color_map = {sat_type: palette[i]
                  for i, sat_type in enumerate(df['satTye'].unique())}
 
-    fig = plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=(5, 5))
     ax = fig.add_subplot(111, polar=True)
     ax.set_theta_zero_location('N')
     ax.set_theta_direction(-1)
@@ -30,7 +30,7 @@ def plot_satellite_distribution_seaborn(df):
         # size_norm=True,
         alpha=0.8,
         ax=ax,
-        legend=True,
+        legend='brief',
         marker='.')
     
     handles, labels = ax.get_legend_handles_labels()
