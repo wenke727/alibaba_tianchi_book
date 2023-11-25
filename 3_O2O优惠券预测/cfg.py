@@ -1,3 +1,6 @@
+import sys
+sys.path.append('../')
+
 fd_seperator = ":"
 
 datapath = '../data/' 

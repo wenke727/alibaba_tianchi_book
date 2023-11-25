@@ -1,7 +1,12 @@
 #%%
+import sys
+sys.path.append('../')
+
+from model.featureEng import add_agg_feature, add_agg_feature_names
+from model.vis import plot_qq_with_subfigures
+
 import pandas as pd
 import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
 from datetime import date
 import datetime as dt
@@ -11,27 +16,6 @@ warnings.filterwarnings("ignore")
 
 from cfg import *
 
-#%%
-""" eda """
-def plot_qq_with_subfigures(dataframe, column):
-    """
-    Plot a Q-Q plot for the specified column in the given dataframe based on a condition
-    using subfigures.
-
-    Parameters:
-    dataframe (DataFrame): The dataframe containing the data.
-    condition (Series): A boolean Series indicating the condition to filter the dataframe.
-    column (str): The column for which to plot the Q-Q plot.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-    # Distribution plot
-    sns.distplot(dataframe[column], fit=stats.norm, ax=axes[0])
-
-    # Q-Q plot
-    stats.probplot(dataframe[column], plot=axes[1])
-
-    return fig
 
 #%%
 """ 将特征数值化 """
@@ -158,28 +142,6 @@ def get_day_gap_after(s):
     
     
 """ 统计特征处理函数 """
-def add_agg_feature_names(df, df_group, group_cols, value_col, agg_ops, col_names):
-    # df: 添加特征的dataframe
-    # df_group: 特征生成的数据集
-    # group_cols: group by 的列
-    # value_col: 被统计的列
-    # agg_ops:处理方式 包括：count,mean,sum,std,max,min,nunique
-    # colname: 新特征的名称
-    df_group[value_col]=df_group[value_col].astype('float')
-    df_agg = pd.DataFrame(df_group.groupby(group_cols)[value_col].agg(agg_ops)).reset_index()
-    df_agg.columns = group_cols + col_names
-    df = df.merge(df_agg, on=group_cols, how="left")
-    return df    
-
-def add_agg_feature(df, df_group, group_cols, value_col, agg_ops, keyword):
-    # 统计特征处理函数
-    # 名称按照keyword+'_'+value_col+'_'+op 自动增加
-    col_names=[]
-    for op in agg_ops:
-        col_names.append(keyword+'_'+value_col+'_'+op)
-    df=add_agg_feature_names(df, df_group, group_cols, value_col, agg_ops, col_names)
-    return df
-
 def add_count_new_feature(df, df_group, group_cols, new_feature_name):
     # 增加一个count特征
     df_group[new_feature_name] = 1

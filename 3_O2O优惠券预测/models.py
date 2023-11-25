@@ -1,7 +1,8 @@
 # %%
+from cfg import *
+
 from sklearn import metrics
 from features import get_id_df, get_target_df, get_predictors_df, read_data
-from cfg import *
 import numpy as np
 import pandas as pd
 import datetime
@@ -24,6 +25,7 @@ from sklearn.model_selection import ShuffleSplit
 import warnings
 warnings.filterwarnings("ignore")
 
+from model.model import get_sklearn_model, plot_learning_curve
 
 # %%
 
@@ -50,96 +52,17 @@ def standize_df(train_data, test_data):
 
     return train_data_scaler, test_data_scaler
 
-
-def get_sklearn_model(model_name, param=None):
-    # 朴素贝叶斯
-    if model_name == 'NB':
-        from sklearn.naive_bayes import MultinomialNB
-        model = MultinomialNB(alpha=0.01)
-    # 逻辑回归
-    elif model_name == 'LR':
-        from sklearn.linear_model import LogisticRegression
-        model = LogisticRegression(penalty='l2')
-    # KNN
-    elif model_name == 'KNN':
-        from sklearn.neighbors import KNeighborsClassifier
-        model = KNeighborsClassifier()
-    # 随机森林
-    elif model_name == 'RF':
-        from sklearn.ensemble import RandomForestClassifier
-        model = RandomForestClassifier()
-    # 决策树
-    elif model_name == 'DT':
-        from sklearn import tree
-        model = tree.DecisionTreeClassifier()
-    # 向量机
-    elif model_name == 'SVC':
-        from sklearn.svm import SVC
-        model = SVC(kernel='rbf')
-    # GBDT
-    elif model_name == 'GBDT':
-        from sklearn.ensemble import GradientBoostingClassifier
-        model = GradientBoostingClassifier()
-    # XGBoost
-    elif model_name == 'XGB':
-        from xgboost import XGBClassifier
-        model = XGBClassifier()
-    # lightGBM
-    elif model_name == 'LGB':
-        from lightgbm import LGBMClassifier
-        model = LGBMClassifier()
-    else:
-        print("wrong model name!")
-        return
-
-    if param is not None:
-        model.set_params(**param)
-    return model
-
-
-def plot_learning_curve(estimator, title, X, y, ylim=None, cv=None,
-                        n_jobs=-1, train_sizes=[0.01, 0.02, 0.05, 0.1, 0.2, 0.3]):
-    plt.figure()
-    plt.title(title)
-    if ylim is not None:
-        plt.ylim(*ylim)
-    plt.xlabel("Training examples")
-    plt.ylabel("Score")
-    train_sizes, train_scores, test_scores = learning_curve(
-        estimator, X, y, cv=cv, scoring=myeval, n_jobs=n_jobs, train_sizes=train_sizes)
-    train_scores_mean = np.mean(train_scores, axis=1)
-    train_scores_std = np.std(train_scores, axis=1)
-    test_scores_mean = np.mean(test_scores, axis=1)
-    test_scores_std = np.std(test_scores, axis=1)
-    plt.grid()
-
-    plt.fill_between(train_sizes, train_scores_mean - train_scores_std,
-                     train_scores_mean + train_scores_std, alpha=0.1,
-                     color="r")
-    plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
-                     test_scores_mean + test_scores_std, alpha=0.1, color="g")
-    plt.plot(train_sizes, train_scores_mean, 'o-', color="r",
-             label="Training score")
-    plt.plot(train_sizes, test_scores_mean, 'o-', color="g",
-             label="Cross-validation score")
-
-    plt.legend(loc="best")
-    return plt
-
-
-def plot_curve_single(traindf, classifier, cvnum=5, train_sizes=[0.01, 0.02, 0.05, 0.1, 0.2, 0.3]):
+def plot_curve_single(traindf, classifier, cvnum=5, train_sizes=[0.01, 0.02, 0.05, 0.1, 0.2, 0.3], scoring=myauc):
     # 画算法的学习曲线,为加快画图速度，最多选 20% 数据
     X = get_predictors_df(traindf)
     y = get_target_df(traindf)
 
     estimator = get_sklearn_model(classifier)
-    title = "learning curve of "+classifier+", cv:"+str(cvnum)
+    title = "learning curve of " + classifier + ", cv:" + str(cvnum)
 
-    plot_learning_curve(estimator, title, X, y,
-                        ylim=(0, 1.01),
-                        cv=cvnum,
-                        train_sizes=train_sizes)
-
+    plot_learning_curve(
+        estimator, title, X, y, ylim=(0, 1.01), cv=cvnum, train_sizes=train_sizes, scoring=scoring
+    )
 
 def myauc(test):
     """
@@ -160,7 +83,6 @@ def myauc(test):
         aucs.append(auc)
     return np.average(aucs)
 
-
 def test_model(traindf, classifier):
     train = traindf[traindf.date_received < 20160515].copy()
     test = traindf[traindf.date_received >= 20160515].copy()
@@ -178,7 +100,6 @@ def test_model(traindf, classifier):
     score_coupon = myauc(test)
     logger.debug(
         f"{classifier}, AUC: {score:.3f}, Coupon AUC: {score_coupon:.3f}")
-
 
 def test_model_split(traindf, classifier):
     target = get_target_df(traindf).copy()
@@ -200,7 +121,6 @@ def test_model_split(traindf, classifier):
     score_coupon = myauc(test)
     logger.debug(
         f"{classifier}, AUC: {score:.3f}, Coupon AUC: {score_coupon:.3f}")
-
 
 # 对算法进行分析
 def classifier_df_score(train_feat, classifier, cvnum=5, param=None):
@@ -239,11 +159,11 @@ train_f1, test_f1 = standize_df(train_f1, test_f1)
 
 # %%
 test_model(train_f1, 'LR')
-plot_curve_single(train_f1, 'LR')
+plot_curve_single(train_f1, 'LR', scoring='roc_auc')
 
 # %%
 test_model(train_f1, 'NB')
-plot_curve_single(train_f1, 'NB')
+plot_curve_single(train_f1, 'NB', scoring='roc_auc')
 
 # %%
 test_model(train_f1, 'DT')
@@ -255,7 +175,7 @@ plot_curve_single(train_f1, 'RF')
 
 # %%
 test_model(train_f1, 'LGB')
-plot_curve_single(train_f1, 'LGB')
+plot_curve_single(train_f2, 'LGB', scoring='roc_auc')
 
 # %%
 test_model(train_f1, 'XGB')
