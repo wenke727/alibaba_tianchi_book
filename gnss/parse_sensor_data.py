@@ -212,112 +212,17 @@ df_sat = delete_cache_gnss_records(df_sat)
 #%%
 #! max increase Lengh
 # step 3: 卫星覆盖程度
-
-def satellite_coverage_metric(df, elevation_interval=30, azimuth_interval=30):
-    df['elevation_bin'] = (df['elevation'] // elevation_interval) * elevation_interval
-    df['azimuth_bin'] = (df['azimuth'] // azimuth_interval) * azimuth_interval
-    
-    coverage_df = df.groupby(['elevation_bin', 'azimuth_bin']).agg({
-        'satDb': ['count', 'mean']
-    }).reset_index()
-    
-    coverage_df.columns = ['elevation_bin', 'azimuth_bin', 'sat_count', 'snr_mean']
-    
-    total_bins = (360 // azimuth_interval) * (90 // elevation_interval)
-    occupied_bins = coverage_df['sat_count'].gt(0).sum()
-    coverage_percentage = (occupied_bins / total_bins)
-    average_snr = coverage_df['snr_mean'].mean()
-    snr_std = coverage_df['snr_mean'].std()
-    
-    summary = {
-        # 'total_bins': total_bins,
-        # 'occupied_bins': occupied_bins,
-        'elevation_bin': (coverage_df.elevation_bin.values // 30).astype(int),
-        'azimuth_bin': (coverage_df.azimuth_bin.values // 30).astype(int),
-        'coverage_percentage': coverage_percentage,
-        'average_snr': average_snr,
-        'snr_std_dev': snr_std
-    }
-    
-    return summary
-
-def get_sat_coverage_dataframe(df_sat, group_cols=['rid']):
-    data = df_sat.groupby(group_cols).apply(satellite_coverage_metric)
-
-    df_coverage = pd.json_normalize(data=data)
-    df_coverage.index = data.index
-    
-    return df_coverage
-
-
 df_converage = get_sat_coverage_dataframe(df_sat, ['rid'])
 df_converage = df_converage.merge(df[[LABEL]], left_index=True, right_index=True)
 df_converage
 
 #%%
-
-def longestConsecutive(nums, max_val=11, verbose=True):
-    if verbose: 
-        logger.debug(f"nums: {nums}")
-    if not nums:
-        return 0
-
-    def dp_longest_consecutive(nums):
-        nums = sorted(set(nums))  # Remove duplicates and sort
-        dp = [1] * len(nums)
-        max_len = 1 if nums else 0
-        start = 0
-
-        for i in range(1, len(nums)):
-            if nums[i] - nums[i - 1] == 1:
-                dp[i] = dp[i - 1] + 1
-                if dp[i] > max_len:
-                    max_len = dp[i]
-                    start = i - dp[i] + 1
-            else:
-                dp[i] = 1
-
-        end = start + max_len - 1
-        return max_len, (nums[start], nums[end]) if max_len > 0 else None
-
-    nums_adjusted = [num if num != 0 else max_val + 1 for num in nums]
-    nums_adjusted += [num + max_val + 1 for num in nums if num < max_val]
-
-    max_len_original, interval_original = dp_longest_consecutive(nums)
-    max_len_adjusted, interval_adjusted = dp_longest_consecutive(nums_adjusted)
-
-    if verbose:
-        if max_len_original >= max_len_adjusted:
-            logger.debug(f"Longest Length = {max_len_original}, Interval = {interval_original}")
-        else:
-            logger.debug(f"Longest Length = {max_len_adjusted}, Interval = {interval_adjusted}")
-
-    return max(max_len_original, max_len_adjusted)
-
-rid = 5357
-elevation_bin = df_converage.loc[rid].elevation_bin
-azimuth_bin = df_converage.loc[rid].azimuth_bin
-
-mask = elevation_bin == 0
-longestConsecutive(azimuth_bin[mask].tolist());
-
-mask = elevation_bin == 1
-longestConsecutive(azimuth_bin[mask].tolist());
-
-mask = elevation_bin == 2
-longestConsecutive(azimuth_bin[mask].tolist());
-
-longestConsecutive(np.unique(azimuth_bin).tolist());
-
-# longestConsecutive([7, 8, 9, 11, 0, 1])
-
-
-
-# sns.pairplot(data=df_converage, hue=LABEL)
+sns.pairplot(data=df_converage, hue=LABEL)
 
 # plot_satellite_distribution_seaborn(df_sat.query('rid==99'))
 # df_sat.query('rid==99')
 
+#%%
 
 # step ?: 切分数据
 # X_train, y_train, X_valid, y_valid = next(group_kfold_split(
@@ -335,30 +240,59 @@ params = {
 }
 
 #%%
-# 1. 总体 satDb 的统计
+""" 1. satDb 的统计 """
+# 1.1 总体
 feats, _ = aggregate_data(
     group_cols=['rid'], 
     attrs=['satDb'], 
     desc="satDb",
-    agg_ops=['count', 'mean', 'std', '50%', '75%'],
+    agg_ops=['count', 'mean', 'std', '25%', '50%', '75%'],
     **params
 ) 
+feats
 
-# 2. GPS Beidou 的统计
+#%%
+# 1.2 GNSS Type
 feats, _ = aggregate_data(
     group_cols=['rid', 'satTye'], 
     attrs=['satDb'], 
     filter_sql="satTye in [1, 5]",
-    desc="satTye+satDb",
+    desc="satTye",
     agg_ops=['count', 'mean', 'std', '50%', '75%'],
     **params
 ) 
+feats
 
+#%%
+# 1.3 SatDbBin
+feats, _ = aggregate_data(
+    group_cols=['rid'], 
+    attrs=['satDb'],     
+    bin_att='satDb',
+    intvl=10,
+    filter_sql="satTye in [1, 5]",
+    desc="satTye",
+    agg_ops=['count', 'mean', 'std', '50%', '75%'],
+    **params
+) 
 feats
 
 # %%
+# 1.4 GNSS Type + SatDbBin
+feats, _ = aggregate_data(
+    group_cols=['rid', 'satTye'], 
+    attrs=['satDb'], 
+    bin_att='satDb',
+    intvl=10,
+    filter_sql="satTye in [1]",
+    desc="satTye + satBin",
+    agg_ops=['count', 'mean'],
+    **params
+) 
+feats
 
-# 3. 不同类型的卫星个数
+# %%
+""" 3. 不同类型的卫星个数"""
 feats, _ = aggregate_data(
     group_cols=['rid', 'satTye'], 
     attrs=['satIdentification'], 
@@ -370,18 +304,4 @@ feats, _ = aggregate_data(
 feats
 # feats.fillna(0).astype(np.int8)
 
-# %%
-# ! 4. GPS 分桶
-feats, _ = aggregate_data(
-    group_cols=['rid', 'satTye'], 
-    attrs=['satDb'], 
-    bin_att='satDb',
-    intvl=10,
-    filter_sql="satTye in [1]",
-    desc="satTye + satDb + satBin",
-    agg_ops=['count', 'mean'],
-    **params
-) 
-
-feats
 # %%
