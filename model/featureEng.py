@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from pathos.multiprocessing import ProcessingPool as Pool
-
+from functools import partial
 
 def add_agg_feature_names(df, df_group, group_cols, value_col, agg_ops, col_names):
     # df: 添加特征的dataframe
@@ -29,14 +29,7 @@ def add_agg_feature(df, df_group, group_cols, value_col, agg_ops, keyword):
     return df
 
 
-""" self """
-def parallel_aggregate(df_chunk):
-    # df_chunk = df_chunk.apply(np.array)
-    _df = pd.json_normalize(df_chunk.apply(lambda x: agg_funcs(np.array(x))))
-    _df.index = df_chunk.index
-
-    return _df
-
+""" common """
 def npartition(df, n):
     chunk_size = len(df) // n + (len(df) % n > 0)
     for i in range(0, len(df), chunk_size):
@@ -45,6 +38,8 @@ def npartition(df, n):
 def agg_funcs(x, funcs=["mean", "std", "50%"]):
     _dict = {
         "count": len(x),
+        "unique": np.unique(x),
+        "nunique": len(np.unique(x)),
         "mean": np.mean(x),
         "std": np.std(x),
         "min": np.min(x),
@@ -73,6 +68,13 @@ def join_multi_columns(dfs):
     dfs.columns = columns
 
     return dfs
+
+def parallel_aggregate(df_chunk, agg_ops):
+    # df_chunk = df_chunk.apply(np.array)
+    _df = pd.json_normalize(df_chunk.apply(lambda x: agg_funcs(np.array(x), agg_ops)))
+    _df.index = df_chunk.index
+
+    return _df
 
 def aggregate_data(
     data,
@@ -113,7 +115,8 @@ def aggregate_data(
         else:
             _df_chunks = [df[attr] for df in df_chunks]
             pool = Pool(n_partitions)
-            results = pool.map(parallel_aggregate, _df_chunks)
+            _parallel_aggregate = partial(parallel_aggregate, agg_ops=agg_ops)
+            results = pool.map(_parallel_aggregate, _df_chunks)
             _df = pd.concat(results)
         _df.index = records.index
         _df.columns = [f"{attr}_{i}" for i in _df.columns]
@@ -132,6 +135,35 @@ def aggregate_data(
     tag_2_feats[desc] = dfs.columns.tolist()
 
     return dfs, records
+
+
+""" Special """
+def longestConsecutive(nums, max_val=11):
+    if not nums:
+        return 0
+
+    # 标准的DP方法来找最长连续子序列
+    def dp_longest_consecutive(nums):
+        nums = sorted(set(nums))  # 去除重复并排序
+        dp = [1] * len(nums)
+        max_len = 0 if not nums else 1
+
+        for i in range(1, len(nums)):
+            if nums[i] - nums[i - 1] == 1:
+                dp[i] = dp[i - 1] + 1
+            max_len = max(max_len, dp[i])
+
+        return max_len
+
+    # 调整数组，将0视为 max_val + 1
+    nums_adjusted = [num if num != 0 else max_val + 1 for num in nums]
+    nums_adjusted += [num + max_val + 1 for num in nums if num < max_val]
+
+    # 对原始数组和调整后的数组应用DP
+    max_len_original = dp_longest_consecutive(nums)
+    max_len_adjusted = dp_longest_consecutive(nums_adjusted)
+
+    return max(max_len_original, max_len_adjusted)
 
 
 # 你可以在此调用 process_data 函数
