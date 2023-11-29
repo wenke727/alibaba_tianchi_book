@@ -3,33 +3,7 @@ import pandas as pd
 from pathos.multiprocessing import ProcessingPool as Pool
 from functools import partial
 
-def add_agg_feature_names(df, df_group, group_cols, value_col, agg_ops, col_names):
-    # df: 添加特征的dataframe
-    # df_group: 特征生成的数据集
-    # group_cols: group by 的列
-    # value_col: 被统计的列
-    # agg_ops:处理方式 包括：count,mean,sum,std,max,min,nunique
-    # colname: 新特征的名称
-    df_group[value_col] = df_group[value_col].astype("float")
-    df_agg = pd.DataFrame(
-        df_group.groupby(group_cols)[value_col].agg(agg_ops)
-    ).reset_index()
-    df_agg.columns = group_cols + col_names
-    df = df.merge(df_agg, on=group_cols, how="left")
-    return df
 
-
-def add_agg_feature(df, df_group, group_cols, value_col, agg_ops, keyword):
-    # 统计特征处理函数
-    # 名称按照keyword+'_'+value_col+'_'+op 自动增加
-    col_names = []
-    for op in agg_ops:
-        col_names.append(keyword + "_" + value_col + "_" + op)
-    df = add_agg_feature_names(df, df_group, group_cols, value_col, agg_ops, col_names)
-    return df
-
-
-""" common """
 def npartition(df, n):
     chunk_size = len(df) // n + (len(df) % n > 0)
     for i in range(0, len(df), chunk_size):
@@ -82,6 +56,7 @@ def aggregate_data(
     attrs,
     bin_att=None,
     intvl=25,
+    max_bin=4,
     filter_sql=None,
     n_partitions=4,
     agg_ops=["mean", "std", "50%"],
@@ -92,12 +67,14 @@ def aggregate_data(
     """
     Process the dataframe by grouping, binning, and aggregating.
     """
+    data = data.copy()
     if filter_sql:
         data = data.query(filter_sql)
 
     if bin_att and bin_att in data.columns:
         bin_col = bin_att[:5] + "Bin"
-        data[bin_col] = (data[bin_att] // intvl).astype(np.int8)
+        data.loc[:, bin_col] = (data[bin_att] // intvl).astype(np.int8)
+        data.loc[data[bin_col] >= max_bin, bin_col] = max_bin
         group_cols.append(bin_col)
 
     records = data.groupby(group_cols).agg({attr: list for attr in attrs})

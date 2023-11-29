@@ -37,7 +37,7 @@ def plot_distribution_and_qq(data, column):
     plt.tight_layout()
     plt.show()
 
-def compare_distributions_and_log(train_data, test_data, column):
+def compare_distributions(train_data, test_data, column):
     """
     This function compares the distributions of a specified column between training and test datasets using KDE plots.
     If the difference between distributions is significant, a warning is logged.
@@ -107,7 +107,6 @@ def plot_feature_relationship_and_distribution(data, feature, target, target_typ
 
     plt.tight_layout()
     plt.show()
-
 
 def plot_joint_distribution(data, feature, target):
     """

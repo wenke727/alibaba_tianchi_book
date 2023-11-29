@@ -14,8 +14,10 @@ from scipy.optimize import linear_sum_assignment
 from cfg import DATA_FOLDER
 from feature import get_sat_coverage_dataframe
 from vis import plot_satellite_distribution_seaborn
+from model.vis import plot_kde_grid
 from model.preprocess import reduce_mem_usage
 from model.featureEng import aggregate_data
+from model.preprocess import analyze_and_identify_correlated_columns
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -63,8 +65,11 @@ def group_kfold_split(X, y, groups, n_splits=10):
         # Yield the subsets of the data for the current split
         X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
         y_train, y_valid = y.iloc[train_idx], y.iloc[valid_idx]
+ 
         yield X_train, y_train, X_valid, y_valid
 
+def append_label(feats, df):
+    return feats.merge(df[[LABEL]], left_index=True, right_index=True)
 
 """ 读取函数 """
 def convert_timestamp_to_datetime_custom_unit(df: pd.DataFrame, column_name: str, unit: str = 'ms') -> pd.DataFrame:
@@ -213,11 +218,10 @@ df_sat = delete_cache_gnss_records(df_sat)
 #! max increase Lengh
 # step 3: 卫星覆盖程度
 df_converage = get_sat_coverage_dataframe(df_sat, ['rid'])
-df_converage = df_converage.merge(df[[LABEL]], left_index=True, right_index=True)
+df_converage = append_label(df_converage, df)
+plot_kde_grid(df_converage, hue=LABEL, n_col=3)
+# sns.pairplot(data=df_converage, hue=LABEL)
 df_converage
-
-#%%
-sns.pairplot(data=df_converage, hue=LABEL)
 
 # plot_satellite_distribution_seaborn(df_sat.query('rid==99'))
 # df_sat.query('rid==99')
@@ -230,78 +234,120 @@ sns.pairplot(data=df_converage, hue=LABEL)
 
 # %%
 #! 统计特征
-feat_lst = []
-tag_2_feats = {}
-params = {
-    'data': df_sat, 
-    'feat_lst': feat_lst,
-    'tag_2_feats': tag_2_feats, 
-    'n_partitions': 4,
-}
+def feature_pipline_for_GNSS():
+    #%%
+    feat_lst = []
+    tag_2_feats = {'base': ['satCount', 'useSatCount']}
+    params = {
+        'data': df_sat, 
+        'feat_lst': feat_lst,
+        'tag_2_feats': tag_2_feats, 
+        'n_partitions': 4,
+    }
 
-#%%
-""" 1. satDb 的统计 """
-# 1.1 总体
-feats, _ = aggregate_data(
-    group_cols=['rid'], 
-    attrs=['satDb'], 
-    desc="satDb",
-    agg_ops=['count', 'mean', 'std', '25%', '50%', '75%'],
-    **params
-) 
-feats
+    """ 1. satDb 的统计 """
+    # 1.1 whole
+    feats, _ = aggregate_data(
+        group_cols=['rid'], 
+        attrs=['satDb'], 
+        desc="satDb",
+        agg_ops=['count', 'mean', 'std', '25%', '50%', '75%'],
+        **params
+    ) 
+    feats = append_label(feats, df)
+    plot_kde_grid(feats, hue=LABEL, n_col=3);
 
-#%%
-# 1.2 GNSS Type
-feats, _ = aggregate_data(
-    group_cols=['rid', 'satTye'], 
-    attrs=['satDb'], 
-    filter_sql="satTye in [1, 5]",
-    desc="satTye",
-    agg_ops=['count', 'mean', 'std', '50%', '75%'],
-    **params
-) 
-feats
+    #%%
+    # 1.2 SatDbBin
+    feats, _ = aggregate_data(
+        group_cols=['rid'], 
+        attrs=['satDb'],     
+        bin_att='satDb',
+        intvl=10,
+        filter_sql="satTye in [1, 5]",
+        desc="satTye",
+        agg_ops=['count', 'mean', 'std', '50%', '75%'],
+        **params
+    ) 
+    feats = append_label(feats, df)
+    plot_kde_grid(feats, hue=LABEL, n_col=5, common_norm=False);
+    feats
 
-#%%
-# 1.3 SatDbBin
-feats, _ = aggregate_data(
-    group_cols=['rid'], 
-    attrs=['satDb'],     
-    bin_att='satDb',
-    intvl=10,
-    filter_sql="satTye in [1, 5]",
-    desc="satTye",
-    agg_ops=['count', 'mean', 'std', '50%', '75%'],
-    **params
-) 
-feats
+    #%%
+    # 1.3 GNSS Type
+    feats, _ = aggregate_data(
+        group_cols=['rid', 'satTye'], 
+        attrs=['satDb'], 
+        filter_sql="satTye in [1, 5]",
+        desc="satTye",
+        agg_ops=['count', 'mean', 'std', '50%', '75%'],
+        **params
+    ) 
+    feats = append_label(feats, df)
+    plot_kde_grid(feats, hue=LABEL, n_col=5, common_norm=False);
+    feats
+
+    # %%
+    # 1.4 GNSS Type + SatDbBin
+    feats, _ = aggregate_data(
+        group_cols=['rid', 'satTye'], 
+        attrs=['satDb'], 
+        bin_att='satDb',
+        intvl=10,
+        filter_sql="satTye in [1, 5]",
+        desc="satTye + satBin",
+        agg_ops=['count', 'mean', 'std'],
+        **params
+    ) 
+    feats = append_label(feats, df)
+    plot_kde_grid(feats, hue=LABEL, n_col=3, common_norm=False)
+    feats
+
+    # %%
+    """ 3. 不同类型的卫星个数"""
+    feats, _ = aggregate_data(
+        group_cols=['rid', 'satTye'], 
+        attrs=['satIdentification'], 
+        desc="satTye count",
+        agg_ops=['nunique'], # 'count', 'unique'
+        **params
+    ) 
+
+    feats = append_label(feats, df)
+    plot_kde_grid(feats, hue=LABEL, n_col=3)
+    feats
+    # feats.fillna(0).astype(np.int8)
 
 # %%
-# 1.4 GNSS Type + SatDbBin
-feats, _ = aggregate_data(
-    group_cols=['rid', 'satTye'], 
-    attrs=['satDb'], 
-    bin_att='satDb',
-    intvl=10,
-    filter_sql="satTye in [1]",
-    desc="satTye + satBin",
-    agg_ops=['count', 'mean'],
-    **params
-) 
-feats
+#! model
+from sklearn.preprocessing import StandardScaler
+from model.model import get_sklearn_model, plot_learning_curve, standardize_df
+
+
+feats = df_converage.fillna(-1)
+
+cols = list(feats.columns)
+cols.remove(LABEL)
+
+X, _, _ = standardize_df(feats, feats)
+X = X[cols]
+y = feats[LABEL]
+
+
+# scaler = StandardScaler()
+
+# X = pd.DataFrame(
+#     scaler.fit_transform(feats[cols]),
+#     columns=cols,
+#     index=feats.index
+# )
+
+
+model_name = "KNN"
+clf = get_sklearn_model(model_name)
+plot_learning_curve(clf, model_name, X, y, train_sizes=[.05, .2, .4, .6, .8, 1.0]);
 
 # %%
-""" 3. 不同类型的卫星个数"""
-feats, _ = aggregate_data(
-    group_cols=['rid', 'satTye'], 
-    attrs=['satIdentification'], 
-    desc="satTye count",
-    agg_ops=['nunique', 'unique'], # 'count'
-    **params
-) 
-
-feats
-# feats.fillna(0).astype(np.int8)
+analyze_and_identify_correlated_columns(df_converage, plt_cfg={"annot": True})
 
 # %%

@@ -4,7 +4,6 @@ import pandas as pd
 from loguru import logger
 import matplotlib.pyplot as plt
 
-
 from sklearn.model_selection import KFold
 from sklearn.model_selection import learning_curve
 from sklearn.model_selection import ShuffleSplit
@@ -15,18 +14,113 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, roc_auc_score
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
+""" dataset """
+def get_id_df(df):
+    #返回ID列
+    return df[id_col_names]
 
-class SklearnWrapper(object):
-    def __init__(self, clf, seed=0, params=None):
-        params['random_state'] = seed        
-        self.clf = clf(**params)
-            
-    def train(self, x_train, y_train):        
-        self.clf.fit(x_train, y_train)    
+def get_target_df(df):
+    #返回Target列
+    return df[target_col_name]
+
+def get_predictors_df(df):
+    #返回特征列
+    predictors = [f for f in df.columns if f not in id_target_cols]
+    return df[predictors]
+
+def read_featurefile_train(featurename): 
+    #按特征名读取训练集
+    df = pd.read_csv(
+        featurepath + 'train_' + featurename + '.csv', 
+        sep=',' , 
+        encoding = "utf-8")
+    df.fillna(0,inplace=True)
+    return df
+
+def read_featurefile_test(featurename): 
+    #按特征名读取测试集
+    df=pd.read_csv(
+        featurepath + 'test_' + featurename + '.csv', 
+        sep=',' , 
+        encoding = "utf-8")
+    df.fillna(0,inplace=True)
+    return df
+
+def read_data(featurename): 
+    #按特征名读取数据
+    traindf = read_featurefile_train(featurename)
+    testdf = read_featurefile_test(featurename)
+    return traindf,testdf  
+
+def standardize_df(train_data, test_data=None, 
+                   id_cols=[], 
+                   target_col='label', 
+                   scaler=None, scaler_type='minmax'):
+    """
+    Standardize the feature columns of train and test datasets using either Min-Max scaling or Standard scaling.
+
+    Args:
+    - train_data (pd.DataFrame): The training dataset.
+    - test_data (pd.DataFrame): The test dataset.
+    - id_cols (list): List of column names to be excluded from scaling (like IDs).
+    - target_col (str): The name of the target column in the training data.
+    - scaler_type (str): Type of scaler to use ('minmax' or 'standard').
+
+    Returns:
+    - tuple: A tuple containing the standardized training and test dataframes.
+    """
+    if not isinstance(train_data, pd.DataFrame) or (test_data is not None and not isinstance(test_data, pd.DataFrame)):
+        raise ValueError("train_data and test_data must be pandas DataFrames")
+
+    if scaler_type not in ['minmax', 'standard']:
+        raise ValueError("scaler_type must be either 'minmax' or 'standard'")
+
+    features_columns = [col for col in train_data.columns if col not in id_cols + [target_col]]
     
-    def predict(self, x):        
+    if scaler is None:
+        if scaler_type == 'minmax':
+            from sklearn.preprocessing import MinMaxScaler
+            scaler = MinMaxScaler()
+        else:
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+
+        scaler.fit(train_data[features_columns])
+
+    train_data_scaled = pd.DataFrame(
+        scaler.transform(train_data[features_columns]), 
+        columns=features_columns,
+        index=train_data.index
+    )
+    if test_data is not None:
+        test_data_scaled = pd.DataFrame(
+            scaler.transform(test_data[features_columns]), 
+            columns=features_columns,
+            index=test_data.index
+        )
+
+    train_data_scaled[target_col] = train_data[target_col]
+    for col in id_cols:
+        train_data_scaled[col] = train_data[col]
+        if test_data is not None:
+            test_data_scaled[col] = test_data[col]
+
+    return train_data_scaled, test_data_scaled if test_data is not None else None, scaler
+
+
+""" model """
+class SklearnWrapper(object):
+    def __init__(self, clf, seed=42, params=None):
+        params["random_state"] = seed
+        self.clf = clf(**params)
+
+    def train(self, x_train, y_train):
+        self.clf.fit(x_train, y_train)
+
+    def predict(self, x):
         return self.clf.predict(x)
 
 
@@ -109,7 +203,7 @@ def get_oof(clf, x_train, y_train, x_test, n_splits=5):
     for i, (train_index, valid_index) in enumerate(kf.split(x_train, y_train)):
         trn_x, val_x = x_train.iloc[train_index], x_train.iloc[valid_index]
         trn_y, val_y = y_train[train_index], y_train[valid_index]
-        
+
         clf.train(trn_x, trn_y)
         oof_train[valid_index] = clf.predict(val_x)
         oof_test_skf[i, :] = clf.predict(x_test)
@@ -126,7 +220,7 @@ def plot_learning_curve(
     ylim=None,
     cv=None,
     n_jobs=-1,
-    scoring='accuracy',
+    scoring="accuracy",
     train_sizes=[0.01, 0.02, 0.05, 0.1, 0.2, 0.3],
 ):
     fig, ax = plt.subplots()
@@ -159,19 +253,30 @@ def plot_learning_curve(
         color="g",
     )
     ax.plot(train_sizes, train_scores_mean, "o-", color="r", label="Training score")
-    ax.plot(train_sizes, test_scores_mean, "o-", color="g", label="Cross-validation score")
+    ax.plot(
+        train_sizes, test_scores_mean, "o-", color="g", label="Cross-validation score"
+    )
 
     ax.legend(loc="best")
     return fig
 
 
-def plot_validation_curve(estimator, X, y, param_name, param_range, cv=10, scoring='accuracy', n_jobs=1):
+def plot_validation_curve(
+    estimator, X, y, param_name, param_range, cv=10, scoring="accuracy", n_jobs=1
+):
     # Create a figure
     fig, ax = plt.subplots()
 
     train_scores, test_scores = validation_curve(
-        estimator, X, y, param_name=param_name, param_range=param_range,
-        cv=cv, scoring=scoring, n_jobs=n_jobs)
+        estimator,
+        X,
+        y,
+        param_name=param_name,
+        param_range=param_range,
+        cv=cv,
+        scoring=scoring,
+        n_jobs=n_jobs,
+    )
 
     train_scores_mean = np.mean(train_scores, axis=1)
     train_scores_std = np.std(train_scores, axis=1)
@@ -183,24 +288,40 @@ def plot_validation_curve(estimator, X, y, param_name, param_range, cv=10, scori
     ax.set_ylabel("Score")
     ax.set_ylim(0.0, 1.1)
     ax.semilogx(param_range, train_scores_mean, label="Training score", color="r")
-    ax.fill_between(param_range, train_scores_mean - train_scores_std,
-                    train_scores_mean + train_scores_std, alpha=0.2, color="r")
-    ax.semilogx(param_range, test_scores_mean, label="Cross-validation score",
-                color="g")
-    ax.fill_between(param_range, test_scores_mean - test_scores_std,
-                    test_scores_mean + test_scores_std, alpha=0.2, color="g")
+    ax.fill_between(
+        param_range,
+        train_scores_mean - train_scores_std,
+        train_scores_mean + train_scores_std,
+        alpha=0.2,
+        color="r",
+    )
+    ax.semilogx(
+        param_range, test_scores_mean, label="Cross-validation score", color="g"
+    )
+    ax.fill_between(
+        param_range,
+        test_scores_mean - test_scores_std,
+        test_scores_mean + test_scores_std,
+        alpha=0.2,
+        color="g",
+    )
     ax.legend(loc="best")
 
     return fig
 
 
 if __name__ == "__main__":
-    # Example usage
+    """plot_validation_curve"""
     from sklearn.datasets import load_digits
     from sklearn.svm import SVC
+
     digits = load_digits()
     X, y = digits.data, digits.target
     param_range = np.logspace(-6, -1, 5)
 
-    fig = plot_validation_curve(SVC(), X, y, param_name="gamma", param_range=param_range)
-    # You can now display or save fig as needed
+    fig = plot_validation_curve(
+        SVC(), X, y, param_name="gamma", param_range=param_range
+    )
+
+    # Example usage
+    # train_scaled, test_scaled = standardize_df(train_df, test_df, ['id'], 'label', 'standard')
