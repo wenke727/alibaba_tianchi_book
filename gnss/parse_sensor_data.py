@@ -203,10 +203,10 @@ def extract_data_from_directory(folder: str, keywords: str, unit: str = 'ms') ->
 
     return pd.concat(all_dataframes, ignore_index=True)
 
-def feature_pipline_for_GNSS(df_sat):
+def feature_pipline_for_GNSS(df_sat, df, base_cols=['satCount', 'useSatCount']):
     #! 统计特征
-    feat_lst = []
-    tag_2_feats = {'base': ['satCount', 'useSatCount']}
+    tag_2_feats = {'base': base_cols}
+    feat_lst = [df[base_cols]]
     params = {
         'data': df_sat, 
         'feat_lst': feat_lst,
@@ -307,10 +307,13 @@ df_sat = delete_cache_gnss_records(df_sat)
 # df_sat.query('rid==99')
 
 # step 3: Pipeline 
-feat_lst, tag_2_feats = feature_pipline_for_GNSS(df_sat)
+feat_lst, tag_2_feats = feature_pipline_for_GNSS(df_sat, df)
 logger.debug(tag_2_feats)
-feats = pd.concat(feat_lst[:2], axis=1).fillna(-1)
+#%%
+
+feats = pd.concat(feat_lst[:3], axis=1).fillna(-1)
 feats = append_label(feats, df)
+feats
 
 #%%
 # step 4: 共线分析
@@ -327,7 +330,7 @@ X_train, y_train, X_valid, y_valid = next(group_kfold_split(
 from sklearn.preprocessing import StandardScaler
 from model.model import get_sklearn_model, plot_learning_curve, standardize_df
 
-_X_train, _X_valid, _ = standardize_df(X_train, X_valid)
+_X_train, _X_valid, scaler = standardize_df(X_train, X_valid)
 
 model_name = "LR"
 clf = get_sklearn_model(model_name)
@@ -344,21 +347,39 @@ def add_pred_and_label(clf, X, y):
     X = X.copy()
     X.loc[:, 'pred'] = clf.predict(X)
     X.loc[:, 'gt'] = y
-    X.loc[:, 'combine'] = X.apply(lambda x: (x['gt'], x['pred']), axis=1)
 
     return X
 
 X = add_pred_and_label(clf, _X_train, y_train)
-X
+X.loc[:, _X_train.columns] = scaler.inverse_transform(X[_X_train.columns])
 
-# %%
-
+#%%
 gt = False
 pred = True
 
-_X = X.query('(gt == pred  == @gt) or (gt == pred  == @pred) or (gt == @gt and pred  == @pred)')
-plot_kde_grid(_X, 3, hue='combine', common_norm=False);
+wo_pred_gt = False
+lst = []
+
+_X_0 = X.query(f'gt == pred  == {gt}')
+if not _X_0.empty:
+    _X_0.loc[:, 'label'] = gt
+    lst.append(_X_0)
+
+_X_1 = X.query(f'gt == pred == {pred}')
+if not _X_1.empty and not wo_pred_gt:
+    _X_1.loc[:, 'label'] = pred
+    lst.append(_X_1)
+
+_X_2 = X.query('gt == @gt and pred  == @pred')
+if not _X_2.empty:
+    _X_2.loc[:, 'label'] = 'Badcase'
+    lst.append(_X_2)
+
+_X = pd.concat(lst)
+
+plot_kde_grid(_X, 3, hue='label', common_norm=False);
 
 # %%
 _X['combine'].value_counts()
+
 # %%

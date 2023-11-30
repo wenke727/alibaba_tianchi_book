@@ -146,7 +146,8 @@ def find_highly_correlated_columns(df, threshold=0.99):
         groups[root].append(df.columns[i])
 
     # Determining columns to drop (all but the first in each group)
-    logger.info(groups)
+    _dict = {k: v[1:] for k, v in groups.items() if len(v) > 1}
+    logger.info(f"columns_to_drop: {_dict}")
     columns_to_drop = [col for group in groups.values() for col in group[1:]]
 
     return columns_to_drop
