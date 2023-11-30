@@ -102,7 +102,9 @@ def standardize_df(train_data, test_data=None,
             index=test_data.index
         )
 
-    train_data_scaled[target_col] = train_data[target_col]
+    if target_col in list(train_data):
+        train_data_scaled[target_col] = train_data[target_col]
+    
     for col in id_cols:
         train_data_scaled[col] = train_data[col]
         if test_data is not None:

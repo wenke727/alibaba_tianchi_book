@@ -15,6 +15,7 @@ from cfg import DATA_FOLDER
 from feature import get_sat_coverage_dataframe
 from vis import plot_satellite_distribution_seaborn
 from model.vis import plot_kde_grid
+from model.vis import visualize_model_confusion_matrix
 from model.preprocess import reduce_mem_usage
 from model.featureEng import aggregate_data
 from model.preprocess import analyze_and_identify_correlated_columns
@@ -65,6 +66,10 @@ def group_kfold_split(X, y, groups, n_splits=10):
         # Yield the subsets of the data for the current split
         X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
         y_train, y_valid = y.iloc[train_idx], y.iloc[valid_idx]
+    
+        if LABEL in list(X_train):
+            X_train.drop(columns=LABEL, inplace=True)
+            X_valid.drop(columns=LABEL, inplace=True)
  
         yield X_train, y_train, X_valid, y_valid
 
@@ -198,44 +203,8 @@ def extract_data_from_directory(folder: str, keywords: str, unit: str = 'ms') ->
 
     return pd.concat(all_dataframes, ignore_index=True)
 
-
-#%%
-if __name__ == "__main__":
-    df = extract_data_from_directory(DATA_FOLDER, ["GNSS", 'light', 'mobile'])
-    df_sat = explode_sat_data(df)
-    df_sat
-
-
-# %%
-# step 1: delete `NaN`` 
-df_sat = reduce_mem_usage(df_sat)
-df_sat.satFrequency = np.round((df_sat.satFrequency / 1e6).values, 2)
-
-# step 2: delete `cache`
-df_sat = delete_cache_gnss_records(df_sat)
-
-#%%
-#! max increase Lengh
-# step 3: 卫星覆盖程度
-df_converage = get_sat_coverage_dataframe(df_sat, ['rid'])
-df_converage = append_label(df_converage, df)
-plot_kde_grid(df_converage, hue=LABEL, n_col=3)
-# sns.pairplot(data=df_converage, hue=LABEL)
-df_converage
-
-# plot_satellite_distribution_seaborn(df_sat.query('rid==99'))
-# df_sat.query('rid==99')
-
-#%%
-
-# step ?: 切分数据
-# X_train, y_train, X_valid, y_valid = next(group_kfold_split(
-#     df_converage, df_converage[LABEL], df.loc[df_converage.index].fn))
-
-# %%
-#! 统计特征
-def feature_pipline_for_GNSS():
-    #%%
+def feature_pipline_for_GNSS(df_sat):
+    #! 统计特征
     feat_lst = []
     tag_2_feats = {'base': ['satCount', 'useSatCount']}
     params = {
@@ -254,10 +223,16 @@ def feature_pipline_for_GNSS():
         agg_ops=['count', 'mean', 'std', '25%', '50%', '75%'],
         **params
     ) 
-    feats = append_label(feats, df)
-    plot_kde_grid(feats, hue=LABEL, n_col=3);
+    # feats = append_label(feats, df)
+    # plot_kde_grid(feats, hue=LABEL, n_col=3);
 
-    #%%
+    """ 3. 卫星覆盖程度"""
+    df_converage = get_sat_coverage_dataframe(df_sat, ['rid'])
+    feat_lst.append(df_converage)
+    tag_2_feats['converage'] = list(df_converage)
+    # plot_kde_grid(df_converage, hue=LABEL, n_col=3)
+    # sns.pairplot(data=df_converage, hue=LABEL)
+
     # 1.2 SatDbBin
     feats, _ = aggregate_data(
         group_cols=['rid'], 
@@ -269,11 +244,9 @@ def feature_pipline_for_GNSS():
         agg_ops=['count', 'mean', 'std', '50%', '75%'],
         **params
     ) 
-    feats = append_label(feats, df)
-    plot_kde_grid(feats, hue=LABEL, n_col=5, common_norm=False);
-    feats
+    # feats = append_label(feats, df)
+    # plot_kde_grid(feats, hue=LABEL, n_col=5, common_norm=False);
 
-    #%%
     # 1.3 GNSS Type
     feats, _ = aggregate_data(
         group_cols=['rid', 'satTye'], 
@@ -283,11 +256,9 @@ def feature_pipline_for_GNSS():
         agg_ops=['count', 'mean', 'std', '50%', '75%'],
         **params
     ) 
-    feats = append_label(feats, df)
-    plot_kde_grid(feats, hue=LABEL, n_col=5, common_norm=False);
-    feats
+    # feats = append_label(feats, df)
+    # plot_kde_grid(feats, hue=LABEL, n_col=5, common_norm=False);
 
-    # %%
     # 1.4 GNSS Type + SatDbBin
     feats, _ = aggregate_data(
         group_cols=['rid', 'satTye'], 
@@ -299,12 +270,10 @@ def feature_pipline_for_GNSS():
         agg_ops=['count', 'mean', 'std'],
         **params
     ) 
-    feats = append_label(feats, df)
-    plot_kde_grid(feats, hue=LABEL, n_col=3, common_norm=False)
-    feats
+    # feats = append_label(feats, df)
+    # plot_kde_grid(feats, hue=LABEL, n_col=3, common_norm=False)
 
-    # %%
-    """ 3. 不同类型的卫星个数"""
+    """ 2. 不同类型的卫星个数"""
     feats, _ = aggregate_data(
         group_cols=['rid', 'satTye'], 
         attrs=['satIdentification'], 
@@ -313,41 +282,83 @@ def feature_pipline_for_GNSS():
         **params
     ) 
 
-    feats = append_label(feats, df)
-    plot_kde_grid(feats, hue=LABEL, n_col=3)
-    feats
-    # feats.fillna(0).astype(np.int8)
+    # feats = append_label(feats, df)
+    # plot_kde_grid(feats, hue=LABEL, n_col=3)
+
+    return feat_lst, tag_2_feats
+
+
+#%%
+if __name__ == "__main__":
+    df = extract_data_from_directory(DATA_FOLDER, ["GNSS", 'light', 'mobile'])
+    df_sat = explode_sat_data(df)
+    df_sat
+
+
+# %%
+# step 1: delete `NaN` 
+df_sat = reduce_mem_usage(df_sat)
+df_sat.satFrequency = np.round((df_sat.satFrequency / 1e6).values, 2)
+
+# step 2: delete `cache`
+df_sat = delete_cache_gnss_records(df_sat)
+
+# plot_satellite_distribution_seaborn(df_sat.query('rid==99'))
+# df_sat.query('rid==99')
+
+# step 3: Pipeline 
+feat_lst, tag_2_feats = feature_pipline_for_GNSS(df_sat)
+logger.debug(tag_2_feats)
+feats = pd.concat(feat_lst[:2], axis=1).fillna(-1)
+feats = append_label(feats, df)
+
+#%%
+# step 4: 共线分析
+columns_to_drop = analyze_and_identify_correlated_columns(feats, threshold=.98, plt_cfg={"annot": True})
+feats.drop(columns=columns_to_drop, inplace=True)
+
+#%%
+# step 5: 切分数据
+X_train, y_train, X_valid, y_valid = next(group_kfold_split(
+    feats, feats[LABEL], df.loc[feats.index].fn))
 
 # %%
 #! model
 from sklearn.preprocessing import StandardScaler
 from model.model import get_sklearn_model, plot_learning_curve, standardize_df
 
+_X_train, _X_valid, _ = standardize_df(X_train, X_valid)
 
-feats = df_converage.fillna(-1)
-
-cols = list(feats.columns)
-cols.remove(LABEL)
-
-X, _, _ = standardize_df(feats, feats)
-X = X[cols]
-y = feats[LABEL]
-
-
-# scaler = StandardScaler()
-
-# X = pd.DataFrame(
-#     scaler.fit_transform(feats[cols]),
-#     columns=cols,
-#     index=feats.index
-# )
-
-
-model_name = "KNN"
+model_name = "LR"
 clf = get_sklearn_model(model_name)
-plot_learning_curve(clf, model_name, X, y, train_sizes=[.05, .2, .4, .6, .8, 1.0]);
+plot_learning_curve(clf, model_name, _X_train, y_train, train_sizes=[.05, .2, .4, .6, .8, 1.0]);
 
 # %%
-analyze_and_identify_correlated_columns(df_converage, plt_cfg={"annot": True})
+clf.fit(_X_train, y_train)
+# visualize_model_confusion_matrix(clf, _X_valid, y_valid, ['out', 'in'])
+visualize_model_confusion_matrix(clf, _X_train, y_train, ['out', 'in'])
 
+
+#%%
+def add_pred_and_label(clf, X, y):
+    X = X.copy()
+    X.loc[:, 'pred'] = clf.predict(X)
+    X.loc[:, 'gt'] = y
+    X.loc[:, 'combine'] = X.apply(lambda x: (x['gt'], x['pred']), axis=1)
+
+    return X
+
+X = add_pred_and_label(clf, _X_train, y_train)
+X
+
+# %%
+
+gt = False
+pred = True
+
+_X = X.query('(gt == pred  == @gt) or (gt == pred  == @pred) or (gt == @gt and pred  == @pred)')
+plot_kde_grid(_X, 3, hue='combine', common_norm=False);
+
+# %%
+_X['combine'].value_counts()
 # %%

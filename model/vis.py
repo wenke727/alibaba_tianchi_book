@@ -19,7 +19,9 @@ def plot_kde_grid(df, n_col, hue="label", n_row=None, *args, **kwargs):
     :param hue: 用于在kdeplot中进行分组的列名，默认为'label'。
     """
     num_cols = sorted(df.select_dtypes(include=["number"]).columns)
-    logger.debug(f"plot kde plot for: {num_cols}, except {[i for i in df.columns if i not in num_cols]}")
+    logger.debug(
+        f"plot kde plot for: {num_cols}, except {[i for i in df.columns if i not in num_cols]}"
+    )
 
     if n_row is None:
         n_row = math.ceil(len(num_cols) / n_col)
@@ -35,11 +37,12 @@ def plot_kde_grid(df, n_col, hue="label", n_row=None, *args, **kwargs):
         if i < n_row * n_col:
             sns.kdeplot(
                 data=df,
-                x=col, 
+                x=col,
                 fill=True,
-                hue=df[hue] if hue in df.columns else None, 
+                hue=df[hue] if hue in df.columns else None,
                 ax=axes[i],
-                *args, **kwargs
+                *args,
+                **kwargs,
             )
             axes[i].set_title(col)
             axes[i].set_xlabel("")
@@ -77,31 +80,29 @@ def plot_qq_with_subfigures(dataframe, column):
     return fig
 
 
-def plot_confusion_matrix_with_model(
-    model,
-    X_train,
-    y_train,
-    X_test,
-    y_test,
-    classes,
-    title="Confusion matrix",
-    cmap=plt.cm.Blues,
-):
+def visualize_model_confusion_matrix(model, X, y, classes, title="Confusion Matrix", cmap=plt.cm.Blues, normalize=False):
     """
-    This function trains a classifier, makes predictions, and plots the confusion matrix.
-    The confusion matrix displays both the actual counts and the relative proportions.
+    Trains a classifier, makes predictions, and plots the confusion matrix.
+    The confusion matrix displays both the actual counts and the relative proportions, if normalization is True.
+
+    Parameters:
+    - model: The classifier to be used for prediction.
+    - X: Feature data for making predictions.
+    - y: Actual labels.
+    - classes: List of class names for the labels.
+    - title (str): Title of the confusion matrix plot.
+    - cmap: Colormap for the matrix.
+    - normalize (bool): If True, the confusion matrix is normalized.
+
+    Returns:
+    - tuple: A tuple containing the matplotlib figure object and the confusion matrix array.
     """
+    y_pred = model.predict(X)
+    cm = confusion_matrix(y, y_pred)
+    cm_normalized = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]
 
-    # Train the classifier and make predictions
-    y_pred = model.fit(X_train, y_train).predict(X_test)
-
-    # Compute confusion matrix
-    cm = confusion_matrix(y_test, y_pred)
-    cm_normalized = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]  # Normalize
-
-    print("Confusion matrix, without normalization:")
-    print(cm)
-
+    fig, ax = plt.subplots()
+    
     plt.imshow(cm, interpolation="nearest", cmap=cmap)
     plt.title(title)
     plt.colorbar()
@@ -111,9 +112,7 @@ def plot_confusion_matrix_with_model(
 
     # Loop over data dimensions and create text annotations.
     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-        plt.text(
-            j,
-            i,
+        plt.text(j, i,
             f"{cm[i, j]}\n({cm_normalized[i, j]:.2f})",
             horizontalalignment="center",
             color="white" if cm[i, j] > cm.max() / 2.0 else "black",
@@ -122,3 +121,5 @@ def plot_confusion_matrix_with_model(
     plt.ylabel("True label")
     plt.xlabel("Predicted label")
     plt.tight_layout()
+
+    return fig, cm
