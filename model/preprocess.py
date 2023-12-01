@@ -119,10 +119,13 @@ def generate_dataframe_stats(df, missing_threshold=95):
 
     return stats_df, columns_to_drop
 
-def plot_correlation_heatmap(df, *args, **kwargs):
+def plot_correlation_heatmap(df, show_lower_triangle=True,*args, **kwargs):
     corrmat = df.corr()
     plt.figure(figsize=(20, 9))
-    sns.heatmap(corrmat, square=True, *args, **kwargs)
+    mask=None
+    if show_lower_triangle:
+        mask = np.triu(np.ones_like(corrmat, dtype=bool), k=0)
+    sns.heatmap(corrmat, mask=mask, square=True, *args, **kwargs)
     plt.show()
     
     return corrmat
@@ -146,8 +149,8 @@ def find_highly_correlated_columns(df, threshold=0.99):
         groups[root].append(df.columns[i])
 
     # Determining columns to drop (all but the first in each group)
-    _dict = {k: v[1:] for k, v in groups.items() if len(v) > 1}
-    logger.info(f"columns_to_drop: {_dict}")
+    _dict = {(k, v[0]): v[1:] for k, v in groups.items() if len(v) > 1}
+    logger.debug(f"columns_to_drop: {_dict}")
     columns_to_drop = [col for group in groups.values() for col in group[1:]]
 
     return columns_to_drop

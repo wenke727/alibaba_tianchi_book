@@ -14,11 +14,13 @@ from scipy.optimize import linear_sum_assignment
 from cfg import DATA_FOLDER
 from feature import get_sat_coverage_dataframe
 from vis import plot_satellite_distribution_seaborn
-from model.vis import plot_kde_grid
 from model.vis import visualize_model_confusion_matrix
 from model.preprocess import reduce_mem_usage
 from model.featureEng import aggregate_data
 from model.preprocess import analyze_and_identify_correlated_columns
+from model.data_analysis_visualization import add_predictions_and_labels, analyze_and_visualize_conditions, plot_kde_grid
+from model.featureSelection import null_importance_feature_selection, calculate_feature_importance_xgb
+from sklearn.metrics import classification_report
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -77,7 +79,7 @@ def append_label(feats, df):
     return feats.merge(df[[LABEL]], left_index=True, right_index=True)
 
 """ 读取函数 """
-def convert_timestamp_to_datetime_custom_unit(df: pd.DataFrame, column_name: str, unit: str = 'ms') -> pd.DataFrame:
+def convert_timestamp_to_datetime_custom_unit(df: pd.DataFrame, column_name: str, unit: str = 'ms'):
     """
     Convert a timestamp column in a DataFrame to a datetime column in UTC+8 timezone with a specified unit.
     
@@ -97,7 +99,7 @@ def convert_timestamp_to_datetime_custom_unit(df: pd.DataFrame, column_name: str
     df[column_name] = df[column_name].dt.tz_localize('UTC').dt.tz_convert('Asia/Shanghai')
     return df
 
-def explode_sat_data(df: pd.DataFrame) -> pd.DataFrame:
+def explode_sat_data(df: pd.DataFrame):
     """
     Explode the satDataList column of the DataFrame and return a new DataFrame with satellite data.
     
@@ -135,7 +137,7 @@ def optimal_bipartite_matching(gnss_df, light_df):
     
     return gnss_indices[valid_matches], light_indices[valid_matches]
 
-def extract_data_from_zip(zip_filename: str, keyword: str) -> pd.DataFrame:
+def extract_data_from_zip(zip_filename: str, keyword: str):
     """
     Extracts data from a zip file based on a keyword in filenames and returns a DataFrame.
     
@@ -161,7 +163,7 @@ def extract_data_from_zip(zip_filename: str, keyword: str) -> pd.DataFrame:
     # Convert the JSON records to a pandas DataFrame
     return pd.DataFrame(all_records)
 
-def extract_data_from_directory(folder: str, keywords: str, unit: str = 'ms') -> pd.DataFrame:
+def extract_data_from_directory(folder: str, keywords: str, unit: str = 'ms'):
     """
     Extract data from all zip files in a given directory based on a keyword in filenames and returns a DataFrame.
     
@@ -309,9 +311,8 @@ df_sat = delete_cache_gnss_records(df_sat)
 # step 3: Pipeline 
 feat_lst, tag_2_feats = feature_pipline_for_GNSS(df_sat, df)
 logger.debug(tag_2_feats)
-#%%
 
-feats = pd.concat(feat_lst[:3], axis=1).fillna(-1)
+feats = pd.concat(feat_lst[:], axis=1).fillna(-1)
 feats = append_label(feats, df)
 feats
 
@@ -319,18 +320,27 @@ feats
 # step 4: 共线分析
 columns_to_drop = analyze_and_identify_correlated_columns(feats, threshold=.98, plt_cfg={"annot": True})
 feats.drop(columns=columns_to_drop, inplace=True)
+feats
 
 #%%
 # step 5: 切分数据
 X_train, y_train, X_valid, y_valid = next(group_kfold_split(
     feats, feats[LABEL], df.loc[feats.index].fn))
 
+#%% 
+# step 6：特征选择
+feature_comparison, useful_feature_names = null_importance_feature_selection(X_train, y_train, X_train.columns, 200, 42)
+
+#%%
+importance_df, unimportance_df = calculate_feature_importance_xgb(X_train, y_train, num_boost_round=200, importance_type='cover')
+importance_df.head(10)
+
 # %%
 #! model
 from sklearn.preprocessing import StandardScaler
 from model.model import get_sklearn_model, plot_learning_curve, standardize_df
 
-_X_train, _X_valid, scaler = standardize_df(X_train, X_valid)
+_X_train, _X_valid, scaler = standardize_df(X_train[useful_feature_names], X_valid[useful_feature_names])
 
 model_name = "LR"
 clf = get_sklearn_model(model_name)
@@ -342,44 +352,64 @@ clf.fit(_X_train, y_train)
 visualize_model_confusion_matrix(clf, _X_train, y_train, ['out', 'in'])
 
 
-#%%
-def add_pred_and_label(clf, X, y):
-    X = X.copy()
-    X.loc[:, 'pred'] = clf.predict(X)
-    X.loc[:, 'gt'] = y
+# %%
 
-    return X
+def analyze_and_visualize_conditions(X, scaler, gt_label, pred_label, wo_pred_gt, n_col=4):
+    """
+    Analyzes and visualizes data for specific ground truth and prediction conditions.
+    可视化混淆矩阵
 
-X = add_pred_and_label(clf, _X_train, y_train)
-X.loc[:, _X_train.columns] = scaler.inverse_transform(X[_X_train.columns])
+    Args:
+        X: DataFrame containing data with predictions and labels.
+        scaler: Pre-fitted scaler (e.g., StandardScaler).
+        useful_feature_names: List of feature names for plotting.
+        gt: Ground truth value for filtering.
+        pred: Prediction value for filtering.
+        wo_pred_gt: Exclude records where prediction equals ground truth.
 
-#%%
-gt = False
-pred = True
+    Returns:
+        DataFrame containing the filtered and labeled data.
+    """
+    X_scaled = X.copy()
+    label_cols = ['pred_label', 'gt_label']
+    cols = X.columns.difference(label_cols)
+    X_scaled.loc[:, cols] = scaler.inverse_transform(X[cols])
+    # X_scaled.loc[:, cols] = X[cols]
+    X_scaled.loc[:, label_cols] = X[label_cols]
 
-wo_pred_gt = False
-lst = []
+    conditions = [
+        (gt_label, lambda x: x.query(f'gt_label == pred_label == @gt_label')),
+        (pred_label, lambda x: x.query('gt_label == pred_label == @pred_label') if not wo_pred_gt else pd.DataFrame()),
+        (f'{gt_label}->{pred_label}', lambda x: x.query('gt_label == @gt_label and pred_label == @pred_label'))
+    ]
 
-_X_0 = X.query(f'gt == pred  == {gt}')
-if not _X_0.empty:
-    _X_0.loc[:, 'label'] = gt
-    lst.append(_X_0)
+    filtered_data = []
+    for label, condition_func in conditions:
+        subset = condition_func(X_scaled)
+        if not subset.empty:
+            subset['label'] = label
+            filtered_data.append(subset)
 
-_X_1 = X.query(f'gt == pred == {pred}')
-if not _X_1.empty and not wo_pred_gt:
-    _X_1.loc[:, 'label'] = pred
-    lst.append(_X_1)
+    result_X = pd.concat(filtered_data)
+    plot_kde_grid(result_X, n_col=n_col, hue='label', common_norm=False)
 
-_X_2 = X.query('gt == @gt and pred  == @pred')
-if not _X_2.empty:
-    _X_2.loc[:, 'label'] = 'Badcase'
-    lst.append(_X_2)
+    return filtered_data
 
-_X = pd.concat(lst)
-
-plot_kde_grid(_X, 3, hue='label', common_norm=False);
+X_with_labels = add_predictions_and_labels(clf, _X_train, y_train)
+analyzed_data = analyze_and_visualize_conditions(X_with_labels, scaler, gt_label=False, pred_label=True, wo_pred_gt=False)
+analyzed_data[2]
 
 # %%
-_X['combine'].value_counts()
+
+print(classification_report(
+    X_with_labels['gt_label'], 
+    X_with_labels['pred_label'], 
+    # labels=['Out', 'In']
+))
+
+# %%
+from model.featureSelection import rfecv_feature_selection
+
+rfecv_feature_selection(_X_train, y_train, get_sklearn_model("LR"))
 
 # %%

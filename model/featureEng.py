@@ -10,6 +10,9 @@ def npartition(df, n):
         yield df.iloc[i : i + chunk_size]
 
 def agg_funcs(x, funcs=["mean", "std", "50%"]):
+    if isinstance(x, float) or isinstance(x, int): 
+        x = [x]
+        
     _dict = {
         "count": len(x),
         "unique": np.unique(x),
@@ -79,8 +82,6 @@ def aggregate_data(
 
     records = data.groupby(group_cols).agg({attr: list for attr in attrs})
 
-    # Apply aggregation function
-    df_chunks = list(npartition(records, n_partitions))
 
     lst = []
     for attr in attrs:
@@ -90,6 +91,7 @@ def aggregate_data(
                 records[attr].apply(lambda x: agg_funcs(x, funcs=agg_ops))
             )
         else:
+            df_chunks = list(npartition(records[[attr]], n_partitions))
             _df_chunks = [df[attr] for df in df_chunks]
             pool = Pool(n_partitions)
             _parallel_aggregate = partial(parallel_aggregate, agg_ops=agg_ops)
