@@ -10,6 +10,7 @@ import seaborn as sns
 from pathlib import Path
 from loguru import logger
 from scipy.optimize import linear_sum_assignment
+from sklearn.metrics import classification_report
 
 from cfg import DATA_FOLDER
 from feature import get_sat_coverage_dataframe
@@ -18,9 +19,12 @@ from model.vis import visualize_model_confusion_matrix
 from model.preprocess import reduce_mem_usage
 from model.featureEng import aggregate_data
 from model.preprocess import analyze_and_identify_correlated_columns
-from model.data_analysis_visualization import add_predictions_and_labels, analyze_and_visualize_conditions, plot_kde_grid
+from model.data_analysis_visualization import add_predictions_and_labels, visualize_confusion_features, plot_kde_grid
 from model.featureSelection import null_importance_feature_selection, calculate_feature_importance_xgb
-from sklearn.metrics import classification_report
+from model.model import get_sklearn_model, plot_learning_curve, standardize_df
+from model.featureSelection import rfecv_feature_selection
+
+from model.utils.serialization import load_checkpoint, save_checkpoint
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -205,15 +209,14 @@ def extract_data_from_directory(folder: str, keywords: str, unit: str = 'ms'):
 
     return pd.concat(all_dataframes, ignore_index=True)
 
-def feature_pipline_for_GNSS(df_sat, df, base_cols=['satCount', 'useSatCount']):
-    #! 统计特征
+def feature_pipline_for_GNSS(df_sat, df, base_cols=['satCount', 'useSatCount'], n_jobs=1):
     tag_2_feats = {'base': base_cols}
     feat_lst = [df[base_cols]]
     params = {
         'data': df_sat, 
         'feat_lst': feat_lst,
         'tag_2_feats': tag_2_feats, 
-        'n_partitions': 4,
+        'n_partitions': n_jobs,
     }
 
     """ 1. satDb 的统计 """
@@ -287,129 +290,113 @@ def feature_pipline_for_GNSS(df_sat, df, base_cols=['satCount', 'useSatCount']):
     # feats = append_label(feats, df)
     # plot_kde_grid(feats, hue=LABEL, n_col=3)
 
+    info = "\n".join([f"\t'{k}': {v}" for k, v in tag_2_feats.items()] + ['}'])
+    logger.debug("feature_columns = {\n" + f"{info}")
+    
     return feat_lst, tag_2_feats
+
+def postprocess_feature(df, feat_lst, tag_2_feats, drop_high_coor_col_thred=0.98):
+    df_feats = pd.concat(feat_lst[:], axis=1).fillna(0)
+    df_feats = append_label(df_feats, df)
+
+    # 共线分析
+    if drop_high_coor_col_thred is not None and drop_high_coor_col_thred > 0:
+        columns_to_drop = analyze_and_identify_correlated_columns(
+            df_feats, 
+            threshold=drop_high_coor_col_thred, 
+            plt_cfg={"annot": True}
+    )
+    df_feats.drop(columns=columns_to_drop, inplace=True)
+    
+    for k, vals in tag_2_feats.items():
+        for val in vals:
+            if val in columns_to_drop:
+                vals.remove(val)
+
+    return df_feats, tag_2_feats
 
 
 #%%
 if __name__ == "__main__":
     df = extract_data_from_directory(DATA_FOLDER, ["GNSS", 'light', 'mobile'])
     df_sat = explode_sat_data(df)
-    df_sat
 
+    # sat = df_sat.query('rid==99')
+    # plot_satellite_distribution_seaborn(sat)
 
-# %%
-# step 1: delete `NaN` 
-df_sat = reduce_mem_usage(df_sat)
-df_sat.satFrequency = np.round((df_sat.satFrequency / 1e6).values, 2)
+    # step 1: delete `NaN` 
+    df_sat = reduce_mem_usage(df_sat)
+    df_sat.satFrequency = np.round((df_sat.satFrequency / 1e6).values, 2)
 
-# step 2: delete `cache`
-df_sat = delete_cache_gnss_records(df_sat)
+    # step 2: delete `cache`
+    df_sat = delete_cache_gnss_records(df_sat)
 
-# plot_satellite_distribution_seaborn(df_sat.query('rid==99'))
-# df_sat.query('rid==99')
+    # step 3: Pipeline 
+    feat_lst, tag_2_feats = feature_pipline_for_GNSS(df_sat, df)
+    feats, tag_2_feats = postprocess_feature(df, feat_lst, tag_2_feats, drop_high_coor_col_thred=0.99)
 
-# step 3: Pipeline 
-feat_lst, tag_2_feats = feature_pipline_for_GNSS(df_sat, df)
-logger.debug(tag_2_feats)
+    # step 4: 切分数据
+    X_train, y_train, X_valid, y_valid = next(group_kfold_split(feats, feats[LABEL], df.loc[feats.index].fn))
 
-feats = pd.concat(feat_lst[:], axis=1).fillna(-1)
-feats = append_label(feats, df)
-feats
-
-#%%
-# step 4: 共线分析
-columns_to_drop = analyze_and_identify_correlated_columns(feats, threshold=.98, plt_cfg={"annot": True})
-feats.drop(columns=columns_to_drop, inplace=True)
-feats
-
-#%%
-# step 5: 切分数据
-X_train, y_train, X_valid, y_valid = next(group_kfold_split(
-    feats, feats[LABEL], df.loc[feats.index].fn))
+    # save
+    data = {
+        "X_train": X_train, 
+        "y_train": X_train, 
+        "X_valid": X_train, 
+        "y_valid": y_valid
+    }
+    save_checkpoint(data, "../data/gnss_feats.pkl")
+    
 
 #%% 
-# step 6：特征选择
+# data = load_checkpoint("../data/gnss_feats.pkl")
+# X_train, X_valid, y_train, y_valid= data['X_train'], data['X_valid'], data['y_train'], data['y_valid']
+
+""" step 5：特征选择 """
 feature_comparison, useful_feature_names = null_importance_feature_selection(X_train, y_train, X_train.columns, 200, 42)
+# rfecv_feature_selection(X_train, y_train, get_sklearn_model("LR"))
 
 #%%
-importance_df, unimportance_df = calculate_feature_importance_xgb(X_train, y_train, num_boost_round=200, importance_type='cover')
-importance_df.head(10)
+importance_df, unimportance_df = calculate_feature_importance_xgb(
+    X_train[useful_feature_names], y_train, num_boost_round=200, importance_type='cover')
+importance_df
 
 # %%
-#! model
-from sklearn.preprocessing import StandardScaler
-from model.model import get_sklearn_model, plot_learning_curve, standardize_df
+""" step 6. model """
+# cols = X_train.columns
+cols = useful_feature_names
+X_train_scaled, X_valid_scaled, scaler = standardize_df(X_train[cols], X_valid[cols])
 
-_X_train, _X_valid, scaler = standardize_df(X_train[useful_feature_names], X_valid[useful_feature_names])
 
 model_name = "LR"
 clf = get_sklearn_model(model_name)
-plot_learning_curve(clf, model_name, _X_train, y_train, train_sizes=[.05, .2, .4, .6, .8, 1.0]);
+clf.fit(X_train_scaled, y_train)
+
+plot_learning_curve(clf, model_name, X_train_scaled, y_train, train_sizes=[.05, .2, .4, .6, .8, 1.0]);
 
 # %%
-clf.fit(_X_train, y_train)
-# visualize_model_confusion_matrix(clf, _X_valid, y_valid, ['out', 'in'])
-visualize_model_confusion_matrix(clf, _X_train, y_train, ['out', 'in'])
-
-
-# %%
-
-def analyze_and_visualize_conditions(X, scaler, gt_label, pred_label, wo_pred_gt, n_col=4):
-    """
-    Analyzes and visualizes data for specific ground truth and prediction conditions.
-    可视化混淆矩阵
-
-    Args:
-        X: DataFrame containing data with predictions and labels.
-        scaler: Pre-fitted scaler (e.g., StandardScaler).
-        useful_feature_names: List of feature names for plotting.
-        gt: Ground truth value for filtering.
-        pred: Prediction value for filtering.
-        wo_pred_gt: Exclude records where prediction equals ground truth.
-
-    Returns:
-        DataFrame containing the filtered and labeled data.
-    """
-    X_scaled = X.copy()
-    label_cols = ['pred_label', 'gt_label']
-    cols = X.columns.difference(label_cols)
-    X_scaled.loc[:, cols] = scaler.inverse_transform(X[cols])
-    # X_scaled.loc[:, cols] = X[cols]
-    X_scaled.loc[:, label_cols] = X[label_cols]
-
-    conditions = [
-        (gt_label, lambda x: x.query(f'gt_label == pred_label == @gt_label')),
-        (pred_label, lambda x: x.query('gt_label == pred_label == @pred_label') if not wo_pred_gt else pd.DataFrame()),
-        (f'{gt_label}->{pred_label}', lambda x: x.query('gt_label == @gt_label and pred_label == @pred_label'))
-    ]
-
-    filtered_data = []
-    for label, condition_func in conditions:
-        subset = condition_func(X_scaled)
-        if not subset.empty:
-            subset['label'] = label
-            filtered_data.append(subset)
-
-    result_X = pd.concat(filtered_data)
-    plot_kde_grid(result_X, n_col=n_col, hue='label', common_norm=False)
-
-    return filtered_data
-
-X_with_labels = add_predictions_and_labels(clf, _X_train, y_train)
-analyzed_data = analyze_and_visualize_conditions(X_with_labels, scaler, gt_label=False, pred_label=True, wo_pred_gt=False)
-analyzed_data[2]
+visualize_model_confusion_matrix(clf, X_valid_scaled, y_valid, ['out', 'in'])
+print(classification_report(y_valid, clf.predict(X_valid_scaled)))
+visualize_model_confusion_matrix(clf, X_train_scaled, y_train, ['out', 'in'])
 
 # %%
+importance_df, unimportance_df = calculate_feature_importance_xgb(
+    X_train_scaled[useful_feature_names], y_train, num_boost_round=200, importance_type='cover')
+ordered_cols = importance_df.Feature.values.tolist()
+ordered_cols
 
-print(classification_report(
-    X_with_labels['gt_label'], 
-    X_with_labels['pred_label'], 
-    # labels=['Out', 'In']
-))
+#%%
+X_with_labels = add_predictions_and_labels(clf, X_train_scaled, y_train)
+
+#%%
+analyzed_data = visualize_confusion_features(X_with_labels, scaler=scaler, suptitle="Confusion: Out -> In", gt=False, pred=True, cols=ordered_cols)
+# analyzed_data[2]
+
+#%%
+analyzed_data = visualize_confusion_features(X_with_labels, scaler=scaler, suptitle="Confusion: In -> Out", gt=True, pred=False, cols=ordered_cols)
+# analyzed_data[2]
 
 # %%
-from model.featureSelection import rfecv_feature_selection
-
-rfecv_feature_selection(_X_train, y_train, get_sklearn_model("LR"))
+print(classification_report(X_with_labels['gt'], X_with_labels['pred']))
 
 # %%

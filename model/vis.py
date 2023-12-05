@@ -49,7 +49,7 @@ def visualize_model_confusion_matrix(model, X, y, classes, title="Confusion Matr
     """
     y_pred = model.predict(X)
     cm = confusion_matrix(y, y_pred)
-    cm_normalized = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]
+    cm_normalized = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis] * 100
 
     fig, ax = plt.subplots()
     
@@ -63,7 +63,7 @@ def visualize_model_confusion_matrix(model, X, y, classes, title="Confusion Matr
     # Loop over data dimensions and create text annotations.
     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
         plt.text(j, i,
-            f"{cm[i, j]}\n({cm_normalized[i, j]:.2f})",
+            f"{cm[i, j]}\n{cm_normalized[i, j]:.1f}%",
             horizontalalignment="center",
             color="white" if cm[i, j] > cm.max() / 2.0 else "black",
         )

@@ -117,7 +117,7 @@ def aggregate_data(
 
 
 """ Special """
-def longestConsecutive(nums, max_val=11):
+def longest_consecutive_itervals(nums, max_val=11):
     if not nums:
         return 0
 
