@@ -12,3 +12,10 @@ GNSS_TYPE_DICT = {
     6: "GALILEO",
     7: "IRNSS",
 }
+
+KEYWORD_2_COLUMN = {
+    'light': ["values"], 
+    'mobile': ['cid'],
+}
+
+LABEL = "label"

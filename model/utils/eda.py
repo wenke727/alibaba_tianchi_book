@@ -7,36 +7,6 @@ import matplotlib.pyplot as plt
 from loguru import logger
 
 
-def plot_distribution_and_qq(data, column):
-    """
-    This function takes a dataframe and a column name as input.
-    It creates a 2-panel plot: 
-    - The first panel shows the distribution of the data in the specified column with a normal distribution fit.
-    - The second panel shows a Q-Q plot comparing the quantiles of the data to a normal distribution.
-    
-    Parameters:
-    - data: a pandas DataFrame containing the dataset.
-    - column: a string representing the column name in the dataframe to analyze.
-    
-    Returns:
-    - A matplotlib figure with the distribution and Q-Q plot.
-    """
-    # Set up the matplotlib figure with two subplots
-    plt.figure(figsize=(10, 5))
-    
-    # Distribution plot
-    ax = plt.subplot(1, 2, 1)
-    sns.distplot(data[column], fit=stats.norm)
-    ax.set_title('Distribution with Normal Fit')
-    
-    # Q-Q plot
-    ax = plt.subplot(1, 2, 2)
-    stats.probplot(data[column], plot=plt)
-    ax.set_title('Q-Q Plot')
-    
-    plt.tight_layout()
-    plt.show()
-
 def compare_distributions(train_data, test_data, column):
     """
     This function compares the distributions of a specified column between training and test datasets using KDE plots.

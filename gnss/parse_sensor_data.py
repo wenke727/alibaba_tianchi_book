@@ -12,7 +12,6 @@ from loguru import logger
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import classification_report
 
-from cfg import DATA_FOLDER
 from feature import get_sat_coverage_dataframe
 from vis import plot_satellite_distribution_seaborn
 from model.vis import visualize_model_confusion_matrix
@@ -29,12 +28,8 @@ from model.utils.serialization import load_checkpoint, save_checkpoint
 import warnings
 warnings.filterwarnings('ignore')
 
-KEYWORD_2_COLUMN = {
-    'light': ["values"], 
-    'mobile': ['cid'],
-}
+from cfg import DATA_FOLDER, LABEL, KEYWORD_2_COLUMN
 
-LABEL = "label"
 
 """ 工具函数 """
 def delete_cache_gnss_records(data):
@@ -375,9 +370,14 @@ clf.fit(X_train_scaled, y_train)
 plot_learning_curve(clf, model_name, X_train_scaled, y_train, train_sizes=[.05, .2, .4, .6, .8, 1.0]);
 
 # %%
-visualize_model_confusion_matrix(clf, X_valid_scaled, y_valid, ['out', 'in'])
-print(classification_report(y_valid, clf.predict(X_valid_scaled)))
 visualize_model_confusion_matrix(clf, X_train_scaled, y_train, ['out', 'in'])
+metric = classification_report(y_train, clf.predict(X_train_scaled))
+logger.debug(f"Training:\n{metric}")
+
+#%%
+visualize_model_confusion_matrix(clf, X_valid_scaled, y_valid, ['out', 'in'])
+metric = classification_report(y_valid, clf.predict(X_valid_scaled))
+logger.warning(f"Validation:\n{metric}")
 
 # %%
 importance_df, unimportance_df = calculate_feature_importance_xgb(
@@ -389,14 +389,16 @@ ordered_cols
 X_with_labels = add_predictions_and_labels(clf, X_train_scaled, y_train)
 
 #%%
-analyzed_data = visualize_confusion_features(X_with_labels, scaler=scaler, suptitle="Confusion: Out -> In", gt=False, pred=True, cols=ordered_cols)
-# analyzed_data[2]
+analyzed_data = visualize_confusion_features(
+    X_with_labels, scaler=scaler, suptitle="Confusion: Out -> In", gt=False, pred=True, cols=ordered_cols)
+idx = analyzed_data[2].index
+df.loc[idx]
 
 #%%
-analyzed_data = visualize_confusion_features(X_with_labels, scaler=scaler, suptitle="Confusion: In -> Out", gt=True, pred=False, cols=ordered_cols)
-# analyzed_data[2]
+analyzed_data = visualize_confusion_features(
+    X_with_labels, scaler=scaler, suptitle="Confusion: In -> Out", gt=True, pred=False, cols=ordered_cols)
+idx = analyzed_data[2].index
+df.loc[idx]
 
-# %%
-print(classification_report(X_with_labels['gt'], X_with_labels['pred']))
 
 # %%
