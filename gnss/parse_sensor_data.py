@@ -22,7 +22,8 @@ from model.data_analysis_visualization import add_predictions_and_labels, visual
 from model.featureSelection import null_importance_feature_selection, calculate_feature_importance_xgb
 from model.model import get_sklearn_model, plot_learning_curve, standardize_df
 from model.featureSelection import rfecv_feature_selection
-
+from model.metric import flatten_classification_report
+from model.dataframe import query_dataframe
 from model.utils.serialization import load_checkpoint, save_checkpoint
 
 import warnings
@@ -30,8 +31,60 @@ warnings.filterwarnings('ignore')
 
 from cfg import DATA_FOLDER, LABEL, KEYWORD_2_COLUMN
 
+FEAT_CKPT = "../data/gnss_feats.pkl"
+
 
 """ 工具函数 """
+def load_feats(fn=FEAT_CKPT):
+    data = load_checkpoint(fn)
+    df = data['df']
+    df_sat = data['df_sat']
+    feats = data['feats']
+    feat_lst = data['feat_lst']
+    tag_2_feats = data['tag_2_feats']
+
+    return df, df_sat, feats, feat_lst, tag_2_feats
+
+def save_feats(df, ad_sat, feats, feat_lst, tag_2_feats, fn=FEAT_CKPT):
+    data = {
+        "df": df,
+        'df_sat': df_sat,
+        "feats": feats, 
+        "feat_lst": feat_lst, 
+        "tag_2_feats": tag_2_feats, 
+    }
+    save_checkpoint(data, FEAT_CKPT)
+
+def detect_outlier(bad_cases, df):
+    fn_2_num = df.groupby('fn')['label'].count()
+    fn_2_num.name = 'total_num'
+
+    _df_stat = bad_cases.groupby('fn')[['aTime']].count().rename(columns={'aTime': 'num'})
+    _df_stat = _df_stat.merge(fn_2_num, left_index=True, right_index=True)
+    _df_stat.loc[:, 'ratio'] = _df_stat.num / _df_stat.total_num
+    _df_stat.sort_values('ratio', ascending=False)
+    
+    return _df_stat
+
+def get_sat_records(df, idxs, keep_atts=['fn', 'label', 'aTime', 'satCount', 'useSatCount']):
+    _df = df.loc[idxs][keep_atts]
+
+    sql = ['not (azimuth == 0 and elevation == 0)', 'isUsed == True', 'satDb > 0']
+    sql =  ["rid in @idxs"] + sql
+    sats = df_sat.query(' and '.join(sql)).groupby('rid').agg(list)
+
+    db_lst = sats.satDb.apply(lambda x: np.sort(x).astype(int)[::-1])
+    db_mean = db_lst.apply(np.mean)
+    db_75 = db_lst.apply(lambda x: np.quantile(x, .75))
+    _num = db_lst.apply(len)
+
+    _df.loc[:, 'num'] = _num.fillna(0).astype(int)
+    _df.loc[:, 'Db_mean'] = db_mean
+    _df.loc[:, 'Db_75'] = db_75
+    _df.loc[:, 'db_lst'] = db_lst
+    
+    return _df
+
 def delete_cache_gnss_records(data):
     ori_size = data.shape[0]
     data.isUsed = data.isUsed.astype(bool)
@@ -63,10 +116,13 @@ def group_kfold_split(X, y, groups, n_splits=10):
     gkf = GroupKFold(n_splits=n_splits)
 
     # Iterate over each split
+    groups = pd.Series(groups)
     for train_idx, valid_idx in gkf.split(X, y, groups):
         # Yield the subsets of the data for the current split
         X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
         y_train, y_valid = y.iloc[train_idx], y.iloc[valid_idx]
+        logger.debug(f"Training: {list(np.unique(groups.iloc[train_idx]))}")
+        logger.debug(f"Validation: {list(np.unique(groups.iloc[valid_idx]))}")
     
         if LABEL in list(X_train):
             X_train.drop(columns=LABEL, inplace=True)
@@ -330,26 +386,20 @@ if __name__ == "__main__":
     feat_lst, tag_2_feats = feature_pipline_for_GNSS(df_sat, df)
     feats, tag_2_feats = postprocess_feature(df, feat_lst, tag_2_feats, drop_high_coor_col_thred=0.99)
 
-    # step 4: 切分数据
-    X_train, y_train, X_valid, y_valid = next(group_kfold_split(feats, feats[LABEL], df.loc[feats.index].fn))
-
     # save
-    data = {
-        "X_train": X_train, 
-        "y_train": X_train, 
-        "X_valid": X_train, 
-        "y_valid": y_valid
-    }
-    save_checkpoint(data, "../data/gnss_feats.pkl")
-    
+    save_feats(df, df_sat, feats, feat_lst, tag_2_feats, fn=FEAT_CKPT)
+
+
+#%%
+df, df_sat, feats, feat_lst, tag_2_feats = load_feats(FEAT_CKPT)
+
+""" step 4: 切分数据 """
+X_train, y_train, X_valid, y_valid = next(group_kfold_split(feats, feats[LABEL], df.loc[feats.index].fn, n_splits=5))
 
 #%% 
-# data = load_checkpoint("../data/gnss_feats.pkl")
-# X_train, X_valid, y_train, y_valid= data['X_train'], data['X_valid'], data['y_train'], data['y_valid']
-
 """ step 5：特征选择 """
-feature_comparison, useful_feature_names = null_importance_feature_selection(X_train, y_train, X_train.columns, 200, 42)
-# rfecv_feature_selection(X_train, y_train, get_sklearn_model("LR"))
+# feature_comparison, useful_feature_names = null_importance_feature_selection(X_train, y_train, X_train.columns, 200, 42)
+useful_feature_names = rfecv_feature_selection(X_train, y_train, get_sklearn_model("LR"))
 
 #%%
 importance_df, unimportance_df = calculate_feature_importance_xgb(
@@ -370,13 +420,20 @@ clf.fit(X_train_scaled, y_train)
 plot_learning_curve(clf, model_name, X_train_scaled, y_train, train_sizes=[.05, .2, .4, .6, .8, 1.0]);
 
 # %%
+cfg = {
+    'labels': [False, True],
+    'target_names': ['Out', "In"],
+}
+
 visualize_model_confusion_matrix(clf, X_train_scaled, y_train, ['out', 'in'])
-metric = classification_report(y_train, clf.predict(X_train_scaled))
+metric = classification_report(y_train, clf.predict(X_train_scaled), **cfg)
 logger.debug(f"Training:\n{metric}")
+
+flatten_classification_report(y_train, clf.predict(X_train_scaled), **cfg)
 
 #%%
 visualize_model_confusion_matrix(clf, X_valid_scaled, y_valid, ['out', 'in'])
-metric = classification_report(y_valid, clf.predict(X_valid_scaled))
+metric = classification_report(y_valid, clf.predict(X_valid_scaled), **cfg)
 logger.warning(f"Validation:\n{metric}")
 
 # %%
@@ -391,14 +448,23 @@ X_with_labels = add_predictions_and_labels(clf, X_train_scaled, y_train)
 #%%
 analyzed_data = visualize_confusion_features(
     X_with_labels, scaler=scaler, suptitle="Confusion: Out -> In", gt=False, pred=True, cols=ordered_cols)
-idx = analyzed_data[2].index
-df.loc[idx]
+idxs = analyzed_data[2].index
+df.loc[idxs]
+
+#%%
+get_sat_records(df, idxs, keep_atts=['fn', 'aTime', 'satCount', 'useSatCount'])
+
 
 #%%
 analyzed_data = visualize_confusion_features(
     X_with_labels, scaler=scaler, suptitle="Confusion: In -> Out", gt=True, pred=False, cols=ordered_cols)
-idx = analyzed_data[2].index
-df.loc[idx]
+idxs = analyzed_data[2].index
+#%%
+
+get_sat_records(df, idxs, keep_atts=['fn', 'aTime', 'satCount', 'useSatCount'])
+
+# %%
+detect_outlier(_df, df)
 
 
 # %%

@@ -15,7 +15,7 @@ from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import StratifiedKFold
 
 
-def null_importance_feature_selection(X, y, feature_names, n_estimators=100, random_state=42):
+def null_importance_feature_selection(X, y, feature_names, n_estimators=100, random_state=42, n_jobs=-1):
     """
     Performs null importance feature selection to identify useful features in a dataset.
     This method involves comparing the importance of features with their importance when
@@ -37,7 +37,7 @@ def null_importance_feature_selection(X, y, feature_names, n_estimators=100, ran
     """
 
     def calculate_feature_importance(X, y):
-        model = RandomForestClassifier(n_estimators=n_estimators, random_state=random_state)
+        model = RandomForestClassifier(n_estimators=n_estimators, random_state=random_state, n_jobs=n_jobs)
         model.fit(X, y)
         return model.feature_importances_
 
@@ -123,7 +123,7 @@ def sequential_feature_selection(X, y, direction='forward', n_features_to_select
     return selected_features
 
 
-def rfecv_feature_selection(X, y, estimator=None, cv=5, scoring='accuracy', step=1, verbose=0):
+def rfecv_feature_selection(X, y, estimator=None, cv=5, scoring='accuracy', step=1, verbose=0, n_jobs=-1):
     """
     使用 RFECV 进行特征选择。
 
@@ -139,7 +139,7 @@ def rfecv_feature_selection(X, y, estimator=None, cv=5, scoring='accuracy', step
     if estimator is None:
         estimator = RandomForestClassifier()
 
-    rfecv = RFECV(estimator, step=step, cv=StratifiedKFold(cv), scoring=scoring, verbose=verbose)
+    rfecv = RFECV(estimator, step=step, cv=StratifiedKFold(cv), scoring=scoring, verbose=verbose, n_jobs=n_jobs)
     rfecv.fit(X, y)
 
     print("Optimal number of features : %d" % rfecv.n_features_)
