@@ -55,14 +55,14 @@ def save_feats(df, ad_sat, feats, feat_lst, tag_2_feats, fn=FEAT_CKPT):
     }
     save_checkpoint(data, FEAT_CKPT)
 
-def detect_outlier(bad_cases, df):
+def detect_outlier(df, bad_cases_idxs):
     fn_2_num = df.groupby('fn')['label'].count()
     fn_2_num.name = 'total_num'
 
-    _df_stat = bad_cases.groupby('fn')[['aTime']].count().rename(columns={'aTime': 'num'})
+    _df_stat = df.loc[bad_cases_idxs].groupby('fn')[['aTime']].count().rename(columns={'aTime': 'num'})
     _df_stat = _df_stat.merge(fn_2_num, left_index=True, right_index=True)
-    _df_stat.loc[:, 'ratio'] = _df_stat.num / _df_stat.total_num
-    _df_stat.sort_values('ratio', ascending=False)
+    _df_stat.loc[:, 'bad_ratio'] = _df_stat.num / _df_stat.total_num
+    _df_stat.sort_values('bad_ratio', ascending=False, inplace=True)
     
     return _df_stat
 
@@ -79,6 +79,7 @@ def get_sat_records(df, idxs, keep_atts=['fn', 'label', 'aTime', 'satCount', 'us
     _num = db_lst.apply(len)
 
     _df.loc[:, 'num'] = _num.fillna(0).astype(int)
+    _df.loc[:, 'Db_25'] = db_lst.apply(lambda x: np.quantile(x, .25))
     _df.loc[:, 'Db_mean'] = db_mean
     _df.loc[:, 'Db_75'] = db_75
     _df.loc[:, 'db_lst'] = db_lst
@@ -394,7 +395,7 @@ if __name__ == "__main__":
 df, df_sat, feats, feat_lst, tag_2_feats = load_feats(FEAT_CKPT)
 
 """ step 4: 切分数据 """
-X_train, y_train, X_valid, y_valid = next(group_kfold_split(feats, feats[LABEL], df.loc[feats.index].fn, n_splits=5))
+X_train, y_train, X_valid, y_valid = next(group_kfold_split(feats, feats[LABEL], df.loc[feats.index].fn, n_splits=6))
 
 #%% 
 """ step 5：特征选择 """
@@ -402,8 +403,8 @@ X_train, y_train, X_valid, y_valid = next(group_kfold_split(feats, feats[LABEL],
 useful_feature_names = rfecv_feature_selection(X_train, y_train, get_sklearn_model("LR"))
 
 #%%
-importance_df, unimportance_df = calculate_feature_importance_xgb(
-    X_train[useful_feature_names], y_train, num_boost_round=200, importance_type='cover')
+importance_df, unimportance_df = calculate_feature_importance_xgb(X_train[useful_feature_names], y_train, num_boost_round=200, importance_type='cover')
+ordered_cols = importance_df.Feature.values.tolist()
 importance_df
 
 # %%
@@ -420,29 +421,33 @@ clf.fit(X_train_scaled, y_train)
 plot_learning_curve(clf, model_name, X_train_scaled, y_train, train_sizes=[.05, .2, .4, .6, .8, 1.0]);
 
 # %%
-cfg = {
-    'labels': [False, True],
-    'target_names': ['Out', "In"],
-}
 
-visualize_model_confusion_matrix(clf, X_train_scaled, y_train, ['out', 'in'])
-metric = classification_report(y_train, clf.predict(X_train_scaled), **cfg)
-logger.debug(f"Training:\n{metric}")
+def comprehensive_clf_report(clf, X, X_scaled, y, desc, level='debug', metric_lst=[]):
+    cfg = {
+        'labels': [False, True],
+        'target_names': ['Out', "In"],
+    }
+    metric = classification_report(y, clf.predict(X_scaled), **cfg)
+    info = flatten_classification_report(y, clf.predict(X_scaled), desc=desc, **cfg)
+    getattr(logger, level)(f"{desc}\n{metric}")
+    metric_lst.append(info)
 
-flatten_classification_report(y_train, clf.predict(X_train_scaled), **cfg)
+    fig, cm = visualize_model_confusion_matrix(clf, X_scaled, y, cfg['target_names'], title=f"{desc} Confusion Matrix")
+    
+    return fig, info
 
-#%%
-visualize_model_confusion_matrix(clf, X_valid_scaled, y_valid, ['out', 'in'])
-metric = classification_report(y_valid, clf.predict(X_valid_scaled), **cfg)
-logger.warning(f"Validation:\n{metric}")
-
-# %%
-importance_df, unimportance_df = calculate_feature_importance_xgb(
-    X_train_scaled[useful_feature_names], y_train, num_boost_round=200, importance_type='cover')
-ordered_cols = importance_df.Feature.values.tolist()
-ordered_cols
+metric_lst = []
+fig, _ = comprehensive_clf_report(clf, X_train, X_train_scaled, y_train, 'Training', metric_lst=metric_lst);
+fig
 
 #%%
+fig, _ = comprehensive_clf_report(clf, X_valid, X_valid_scaled, y_valid, 'Validation', metric_lst=metric_lst, level='warning');
+fig
+
+# pd.DataFrame(metric_lst)
+
+#%%
+#! Idea: 直接讲混淆的输出文档
 X_with_labels = add_predictions_and_labels(clf, X_train_scaled, y_train)
 
 #%%
@@ -460,11 +465,10 @@ analyzed_data = visualize_confusion_features(
     X_with_labels, scaler=scaler, suptitle="Confusion: In -> Out", gt=True, pred=False, cols=ordered_cols)
 idxs = analyzed_data[2].index
 #%%
-
 get_sat_records(df, idxs, keep_atts=['fn', 'aTime', 'satCount', 'useSatCount'])
 
 # %%
-detect_outlier(_df, df)
+detect_outlier(df, idxs)
 
 
 # %%

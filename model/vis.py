@@ -58,7 +58,7 @@ def visualize_model_confusion_matrix(model, X, y, classes, title="Confusion Matr
     plt.colorbar()
     tick_marks = np.arange(len(classes))
     plt.xticks(tick_marks, classes, rotation=45)
-    plt.yticks(tick_marks, classes)
+    plt.yticks(tick_marks, classes, rotation=45)
 
     # Loop over data dimensions and create text annotations.
     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
@@ -71,5 +71,6 @@ def visualize_model_confusion_matrix(model, X, y, classes, title="Confusion Matr
     plt.ylabel("True label")
     plt.xlabel("Predicted label")
     plt.tight_layout()
+    plt.close()
 
     return fig, cm

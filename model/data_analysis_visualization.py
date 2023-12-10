@@ -69,7 +69,7 @@ def visualize_confusion_features(X, gt, pred, suptitle=None, cols=None, scaler=N
 
     return filtered_data
 
-def plot_kde_grid(df, n_col, suptitle=None, hue="label", n_row=None, *args, **kwargs):
+def plot_kde_grid(df, n_col, suptitle=None, hue="label", n_row=None, common_norm=False, *args, **kwargs):
     """
     对DataFrame中的数值列绘制核密度估计图。
 
@@ -101,6 +101,7 @@ def plot_kde_grid(df, n_col, suptitle=None, hue="label", n_row=None, *args, **kw
                 fill=True,
                 hue=df[hue] if hue in df.columns else None,
                 ax=axes[i],
+                common_norm=common_norm,
                 *args,
                 **kwargs,
             )
