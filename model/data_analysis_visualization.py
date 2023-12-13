@@ -56,9 +56,9 @@ def visualize_confusion_features(X, gt, pred, suptitle=None, cols=None, scaler=N
     filtered_data = []
     for label, _sql in conditions:
         subset = X_scaled.query(_sql)
-        if not subset.empty:
-            subset['label'] = label
-            filtered_data.append(subset)
+        # if not subset.empty:
+        subset['label'] = label
+        filtered_data.append(subset)
 
     result_X = pd.concat(filtered_data)
     if cols is None:
@@ -119,4 +119,31 @@ def plot_kde_grid(df, n_col, suptitle=None, hue="label", n_row=None, common_norm
     plt.tight_layout()
 
     return fig
+
+def plot_grid(plot_func, data, x, y, plot_params=None, n_col=4, suptitle=None):
+    if plot_params is None:
+        plot_params = {}
+    
+    _len = len(y)
+    n_col = min(n_col, _len)
+    n_row = math.ceil(_len / n_col)
+    
+    fig, axes = plt.subplots(n_row, n_col, figsize=(n_col * 5, n_row * 3))
+    axes = axes.flatten() if n_row * n_col > 1 else [axes]
+    
+    for i, col in enumerate(y):
+        plot_func(data=data, x=x, y=col, ax=axes[i], **plot_params)
+        axes[i].set_title(col)
+        axes[i].set_xlabel("")
+        
+    # Hide any remaining axes
+    for j in range(i + 1, n_row * n_col):
+        axes[j].axis("off")
+
+    if suptitle:
+        plt.suptitle(suptitle, fontweight='bold')
+    
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust the padding if a suptitle is present
+
+    return fig, axes
 

@@ -225,12 +225,6 @@ def plot_learning_curve(
     scoring="accuracy",
     train_sizes=[0.01, 0.02, 0.05, 0.1, 0.2, 0.3],
 ):
-    fig, ax = plt.subplots()
-    ax.set_title(title)
-    if ylim is not None:
-        ax.set_ylim(*ylim)
-    ax.set_xlabel("Training examples")
-    ax.set_ylabel("Score")
     train_sizes, train_scores, test_scores = learning_curve(
         estimator, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs, train_sizes=train_sizes
     )
@@ -238,8 +232,17 @@ def plot_learning_curve(
     train_scores_std = np.std(train_scores, axis=1)
     test_scores_mean = np.mean(test_scores, axis=1)
     test_scores_std = np.std(test_scores, axis=1)
-    ax.grid()
+    logger.debug(f"Training score: {train_scores_mean[-1]*100:.2f}%(std: {train_scores_std[-1]*100:.2f}), "
+                 f"Validation score: {test_scores_mean[-1]*100:.2f}%(std: {test_scores_std[-1]*100:.2f})"
+    )
 
+    fig, ax = plt.subplots()
+    ax.set_title(title)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    ax.set_xlabel("Training examples")
+    ax.set_ylabel("Score")    
+    ax.grid()
     ax.fill_between(
         train_sizes,
         train_scores_mean - train_scores_std,
@@ -255,9 +258,7 @@ def plot_learning_curve(
         color="g",
     )
     ax.plot(train_sizes, train_scores_mean, "o-", color="r", label="Training score")
-    ax.plot(
-        train_sizes, test_scores_mean, "o-", color="g", label="Cross-validation score"
-    )
+    ax.plot(train_sizes, test_scores_mean, "o-", color="g", label="Cross-validation score")
 
     ax.legend(loc="best")
     return fig
